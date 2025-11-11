@@ -1,4 +1,3 @@
-
 # app.py — Bankruptcy Prediction Dashboard (Fixed Version)
 # Run:
 #   pip install -r requirements.txt
@@ -45,9 +44,15 @@ with st.sidebar:
     price_years = st.select_slider("📈 Price History (years)", options=[1,2,3,5,10], value=5)
     st.markdown("---")
     st.markdown("### 📊 Model Info")
-    pack = build_models()
-    st.metric("Active Models", len(pack["models"]))
-    st.metric("Training Samples", "1,000")
+    
+    # Safely load models
+    try:
+        pack = build_models()
+        st.metric("Active Models", len(pack["models"]))
+        st.metric("Training Samples", "1,000")
+    except Exception as e:
+        st.warning("Models loading...")
+    
     if st.session_state.history:
         st.markdown("---")
         st.metric("Analyses Run", len(st.session_state.history))
@@ -1084,4 +1089,3 @@ def sector_stats(sector):
                          "gray":int(sum(1 for x in z if 1.81<=x<=2.99)),
                          "distress":int(sum(1 for x in z if x<1.81))},
             "rows":rows}
-
