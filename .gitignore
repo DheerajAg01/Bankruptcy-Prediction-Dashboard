@@ -1,28 +1,35 @@
-# Python cache
+# Python bytecode & cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.cache/
+cache/
 
 # Virtual environments
 .venv/
 env/
 venv/
 ENV/
+*.env
 
-# Streamlit
+# Streamlit local files (but keep config.toml)
 .streamlit/secrets.toml
 .streamlit/cache/
 .streamlit/logs/
 
-# Editor / OS
-.DS_Store
-Thumbs.db
+# Editor / IDE
 .vscode/
 .idea/
 
-# Data (optional)
+# OS system files
+.DS_Store
+Thumbs.db
+
+# Data files (optional)
 *.log
+
+# User exports & generated data
 *.csv
 *.xlsx
 *.parquet
