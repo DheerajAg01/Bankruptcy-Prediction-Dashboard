@@ -1,4 +1,5 @@
-# app.py — Bankruptcy Prediction Dashboard (clean rewrite with robust price chart)
+
+# app.py — Bankruptcy Prediction Dashboard (Fixed Version)
 # Run:
 #   pip install -r requirements.txt
 #   streamlit run app.py
@@ -13,7 +14,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# 3rd party libs (yfinance must be installed via requirements.txt)
+# 3rd party libs
 try:
     import yfinance as yf
 except Exception as e:
@@ -30,10 +31,604 @@ from plotly.subplots import make_subplots
 
 # Optional XGBoost
 try:
-    import xgboost as xgb  # type: ignore
+    import xgboost as xgb
     XGBOOST_AVAILABLE = True
 except Exception:
     XGBOOST_AVAILABLE = False
+
+# -------------------------------
+# UI: Sidebar
+# -------------------------------
+with st.sidebar:
+    st.markdown("## ⚙️ Configuration")
+    prefer = st.selectbox("📊 Financials Preference", ["auto","annual","quarterly"], index=0)
+    price_years = st.select_slider("📈 Price History (years)", options=[1,2,3,5,10], value=5)
+    st.markdown("---")
+    st.markdown("### 📊 Model Info")
+    pack = build_models()
+    st.metric("Active Models", len(pack["models"]))
+    st.metric("Training Samples", "1,000")
+    if st.session_state.history:
+        st.markdown("---")
+        st.metric("Analyses Run", len(st.session_state.history))
+    st.markdown("---")
+    st.markdown("<div class='small'>Tip: use exchange suffixes for non-US tickers (e.g., RELIANCE.NS, SHOP.TO, VOD.L)</div>", unsafe_allow_html=True)
+
+# -------------------------------
+# HEADER & TABS
+# -------------------------------
+st.markdown("""
+<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">
+  <div style="font-size:20px;color:#f8fafc;font-weight:700">🏛️ Bankruptcy Prediction Dashboard</div>
+  <div style="color:#cbd5e1">Advanced Financial Analysis Using ML & Altman Z-Score</div>
+</div>
+""", unsafe_allow_html=True)
+tabs = st.tabs(["🔍 Analyze","⚖️ Compare","🏢 Industry","🤖 Models","📜 History","📥 Export"])
+
+# -------------------------------
+# ANALYZE TAB
+# -------------------------------
+with tabs[0]:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### 📊 Enter Stock Ticker")
+    col_inp, col_btn = st.columns([4,1])
+    with col_inp:
+        user_raw = st.text_input("Stock Ticker", value="", placeholder="e.g., AAPL, RELIANCE.NS, SHOP.TO", label_visibility="collapsed")
+    with col_btn:
+        go_btn = st.button("🔍 Analyze", use_container_width=True, type="primary")
+
+    st.markdown('<div class="small" style="margin-top:12px;">Quick Select:</div>', unsafe_allow_html=True)
+    qcols = st.columns(8)
+    selected_quick=None
+    for t, col in zip(["AAPL","MSFT","TSLA","AMZN","META","GOOGL","JPM","BAC"], qcols):
+        with col:
+            if st.button(t, key=f"quick_{t}", use_container_width=True):
+                selected_quick = t
+
+    ticker = selected_quick if selected_quick else (normalize_tickers(user_raw)[0] if user_raw else None)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if (go_btn or selected_quick) and ticker:
+        with st.spinner(f"🔄 Analyzing {ticker}..."):
+            try:
+                base = collect_financial_data(ticker, prefer=prefer)
+                ratios = compute_ratios(base)
+                z, zcomp = altman_z(ratios)
+                z_status, z_risk, _ = z_classify(z)
+                z_prob = z_probability(z)
+                ml = predict_all(ratios)
+                comb = combined_assessment(z, ml)
+                record_industry(base["sector"], ticker, z, ml["probability_bankrupt"])
+
+                result = {
+                    "ticker": ticker,
+                    "company_name": base["company_name"],
+                    "sector": base["sector"],
+                    "industry": base["industry"],
+                    "altman": {"score": round(z,2), "status": z_status, "risk": z_risk, "prob": z_prob, "components": zcomp},
+                    "ml": ml,
+                    "combined": comb,
+                    "ratios": {k:(round(v,4) if abs(v)<100 else round(v,2)) for k,v in ratios.items()},
+                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                st.session_state.history.append(result)
+
+                st.success(f"✅ Successfully analyzed {base['company_name']} ({ticker})")
+                st.markdown("---")
+
+                c1,c2 = st.columns([1.4,1])
+                with c1:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    left,right = st.columns([3,1])
+                    with left:
+                        st.markdown(f"## {base['company_name']}")
+                        st.markdown(f"**Ticker:** {ticker} &nbsp;&nbsp; **Sector:** {base['sector']}")
+                    with right:
+                        csv_bytes = _csv_from_result(ticker, {"company_name": base["company_name"], "sector": base["sector"]},
+                                                    ratios, z, z_prob, ml, comb)
+                        st.download_button("📥 Export", data=csv_bytes, file_name=f"{ticker}_analysis.csv", mime="text/csv", use_container_width=True)
+                    m1,m2,m3 = st.columns(3)
+                    with m1:
+                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Market Cap</div><div class="metric-value">{fmt_curr(base.get('market_cap',0))}</div></div>""", unsafe_allow_html=True)
+                    with m2:
+                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Stock Price</div><div class="metric-value">{fmt_curr(base.get('stock_price',0))}</div></div>""", unsafe_allow_html=True)
+                    with m3:
+                        ind = base['industry'] if base['industry'] else "—"
+                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Industry</div><div class="metric-value" style="font-size:1.0rem">{ind[:20]}</div></div>""", unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with c2:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    st.markdown("## 🎯 Risk Assessment")
+                    badge = "safe" if comb["status"]=="Safe" else ("gray" if comb["status"]=="Gray Zone" else "distress")
+                    st.markdown(f'<div class="badge {badge}" style="margin:12px 0;">{comb["status"]}</div>', unsafe_allow_html=True)
+                    b1,b2 = st.columns(2)
+                    with b1:
+                        st.metric("Risk Level", comb["risk_level"])
+                        st.metric("Agreement", "✓ Yes" if comb["model_agreement"] else "✗ No")
+                    with b2:
+                        st.metric("Combined Risk", f"{comb['combined_probability']}%")
+                        st.metric("Confidence", f"{ml['confidence']}%")
+                    bar = "safe" if comb["combined_probability"]<20 else ("warning" if comb["combined_probability"]<50 else "danger")
+                    st.markdown(f"""<div class="progress-container" style="margin-top:12px;"><div class="progress-bar {bar}" style="width:{int(comb['combined_probability'])}%"></div></div>""", unsafe_allow_html=True)
+                    st.markdown(f"<div class='small' style='margin-top:8px'>{comb['recommendation']}</div>", unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                m1,m2 = st.columns([1,2])
+                with m1:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    st.plotly_chart(chart_z_gauge(z), use_container_width=True, config={"displayModeBar": False})
+                    st.markdown(f"<div class='small'><strong>Status:</strong> {z_status}<br><strong>Risk:</strong> {z_risk}<br><strong>Probability:</strong> {z_prob}%</div>", unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with m2:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    price_df = fetch_price_history(ticker, years=price_years)
+                    
+                    if not price_df.empty:
+                        fig_price = chart_price(price_df, ticker)
+                        if fig_price:
+                            st.plotly_chart(fig_price, use_container_width=True, config={"displayModeBar": False})
+                        else:
+                            st.warning("⚠️ Price data available but chart rendering failed")
+                    else:
+                        st.info("📊 Price history not available for this ticker")
+                        st.markdown("<div class='small'>Some tickers may not have historical price data available via Yahoo Finance.</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                ch1,ch2 = st.columns(2)
+                with ch1:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    st.plotly_chart(chart_z_components(zcomp), use_container_width=True, config={"displayModeBar": False})
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with ch2:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    st.plotly_chart(chart_ratio_radar(ratios), use_container_width=True, config={"displayModeBar": False})
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                bt1,bt2 = st.columns(2)
+                with bt1:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    st.markdown("### 🤖 ML Model Predictions")
+                    st.plotly_chart(chart_model_probs(ml), use_container_width=True, config={"displayModeBar": False})
+                    mdl_df = pd.DataFrame([{"Model":k.replace("_"," ").title(),"Risk %":f"{v['probability_bankrupt']}%","Safe %":f"{v['probability_safe']}%","Prediction":v['risk_label']} for k,v in ml["individual_models"].items()])
+                    st.dataframe(mdl_df, use_container_width=True, hide_index=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with bt2:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    if ml.get("rf_features"):
+                        fi_fig = chart_rf_importance(ml["rf_features"])
+                        if fi_fig: st.plotly_chart(fi_fig, use_container_width=True, config={"displayModeBar": False})
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+                st.markdown("### 📊 Complete Financial Ratios")
+                ratio_categories = {
+                    "Altman Z Components":["working_capital_to_assets","retained_earnings_to_assets","ebit_to_assets","market_cap_to_liabilities","sales_to_assets"],
+                    "Liquidity Ratios":["current_ratio","quick_ratio","cash_ratio"],
+                    "Leverage Ratios":["debt_to_equity","debt_to_assets","long_term_debt_to_equity","interest_coverage"],
+                    "Profitability Ratios":["return_on_assets","return_on_equity","profit_margin","gross_margin","operating_margin","ebitda_margin"],
+                    "Efficiency Ratios":["asset_turnover","receivables_turnover","inventory_turnover"],
+                    "Cash Flow Ratios":["operating_cashflow_to_sales","free_cashflow_to_equity","capex_to_revenue"]
+                }
+                cols = st.columns(len(ratio_categories))
+                for idx,(category,keys) in enumerate(ratio_categories.items()):
+                    with cols[idx]:
+                        st.markdown(f"**{category}**")
+                        data=[{"Metric":k.replace("_"," ").title(),"Value":result["ratios"][k]} for k in keys if k in result["ratios"]]
+                        if data: st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True, height=240)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            except Exception as e:
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+                st.error(f"❌ Analysis failed for '{ticker}'")
+                st.exception(e)
+                st.markdown("<div class='small'>Troubleshooting: check ticker spelling, add exchange suffix (.NS, .TO, .L), ensure network and that yfinance is installed.</div>", unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+# -------------------------------
+# COMPARE TAB
+# -------------------------------
+with tabs[1]:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### ⚖️ Compare Multiple Companies")
+    line = st.text_input("Enter tickers (comma separated)", value="AAPL, MSFT, TSLA, GOOGL", help="Enter up to 12 tickers separated by commas")
+    if st.button("🔍 Compare All", type="primary"):
+        tks = normalize_tickers(line)[:12]
+        with st.spinner(f"🔄 Analyzing {len(tks)} companies..."):
+            rows=[]; progress_bar = st.progress(0)
+            for i,tk in enumerate(tks):
+                try:
+                    base = collect_financial_data(tk, prefer=prefer)
+                    ratios = compute_ratios(base)
+                    z,_ = altman_z(ratios)
+                    ml = predict_all(ratios)
+                    comb = combined_assessment(z, ml)
+                    record_industry(base["sector"], tk, z, ml["probability_bankrupt"])
+                    rows.append({"Ticker":tk,"Company":base["company_name"],"Sector":base["sector"],
+                                 "Z-Score":round(z,2),"ML Risk %":ml["probability_bankrupt"],
+                                 "Combined %":comb["combined_probability"],"Status":comb["status"],"Risk Level":comb["risk_level"]})
+                except Exception as e:
+                    rows.append({"Ticker":tk,"Company":"Error","Sector":"-","Z-Score":None,"ML Risk %":None,"Combined %":None,"Status":f"Failed: {str(e)[:30]}","Risk Level":"-"})
+                progress_bar.progress((i+1)/max(len(tks),1))
+            progress_bar.empty()
+            if rows:
+                dfc=pd.DataFrame(rows)
+                st.dataframe(dfc, use_container_width=True, hide_index=True)
+                valid = dfc[dfc["Combined %"].notna()].copy()
+                if not valid.empty:
+                    colors=["#10b981" if s=="Safe" else "#f59e0b" if s=="Gray Zone" else "#ef4444" for s in valid["Status"]]
+                    fig=go.Figure([go.Bar(x=valid["Ticker"], y=valid["Combined %"], marker_color=colors,
+                                          text=valid["Combined %"].round(1), texttemplate="%{text}%", textposition="outside")])
+                    fig.update_layout(title="Combined Bankruptcy Risk Comparison", template="plotly_dark", height=450,
+                                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                                      font=dict(color="#cbd5e1"), yaxis_title="Bankruptcy Risk %")
+                    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
+                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# -------------------------------
+# INDUSTRY TAB
+# -------------------------------
+with tabs[2]:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### 🏢 Industry Analysis")
+    sectors = sorted(list(st.session_state.industry.keys()))
+    if sectors:
+        sec = st.selectbox("Select sector", [""]+sectors)
+        if sec:
+            stats = sector_stats(sec)
+            if stats:
+                m1,m2,m3,m4,m5 = st.columns(5)
+                labels = ["Companies","Avg Z-Score","Median Z","Min Z","Max Z"]
+                vals = [stats['n'],stats['z_mean'],stats['z_med'],stats['z_min'],stats['z_max']]
+                for col,label,val in zip([m1,m2,m3,m4,m5],labels,vals):
+                    with col:
+                        st.markdown(f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{val}</div></div>""", unsafe_allow_html=True)
+                fig_sector = chart_sector_risk(stats)
+                if fig_sector:
+                    st.plotly_chart(fig_sector, use_container_width=True, config={"displayModeBar": False})
+                st.markdown("#### Sector Companies")
+                st.dataframe(pd.DataFrame(stats["rows"]), use_container_width=True, hide_index=True)
+    else:
+        st.info("📊 No sector data available yet. Run some analyses to populate industry statistics.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# -------------------------------
+# MODELS TAB
+# -------------------------------
+with tabs[3]:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### 🤖 Machine Learning Models Performance")
+    m = build_models()["metrics"]
+    rows=[{"Model":name.replace("_"," ").title(),
+           "Accuracy":f"{met['accuracy']*100:.2f}%","Precision":f"{met['precision']*100:.2f}%",
+           "Recall":f"{met['recall']*100:.2f}%","F1-Score":f"{met['f1']*100:.2f}%","ROC-AUC":f"{met['roc_auc']*100:.2f}%"}
+          for name,met in m.items()]
+    df_rows=pd.DataFrame(rows)
+    st.dataframe(df_rows, use_container_width=True, hide_index=True, height=250)
+    fig=go.Figure()
+    metrics_to_plot=["Accuracy","Precision","Recall","F1-Score","ROC-AUC"]
+    color_map={"Accuracy":"#6366f1","Precision":"#8b5cf6","Recall":"#ec4899","F1-Score":"#10b981","ROC-AUC":"#f59e0b"}
+    for metric in metrics_to_plot:
+        vals=[float(v.strip("%")) for v in df_rows[metric]]
+        fig.add_trace(go.Bar(name=metric, x=df_rows["Model"], y=vals, marker_color=color_map[metric]))
+    fig.update_layout(title="Model Performance Comparison", template="plotly_dark", height=450, barmode="group",
+                      margin=dict(l=20,r=20,t=60,b=80), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color="#cbd5e1"), legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                      yaxis_title="Score %")
+    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.markdown("<div class='small'>Training data: 1,000 synthetic samples (≈33% bankrupt). Ensemble: majority vote with probability averaging.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# -------------------------------
+# HISTORY TAB
+# -------------------------------
+with tabs[4]:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### 📜 Analysis History")
+    hist = st.session_state.history[-50:]
+    if hist:
+        tidy=[{"Timestamp":h["ts"],"Ticker":h["ticker"],"Company":h["company_name"],"Sector":h["sector"],
+               "Z-Score":h["altman"]["score"],"Z-Status":h["altman"]["status"],
+               "ML Risk %":h["ml"]["probability_bankrupt"],"Combined %":h["combined"]["combined_probability"],
+               "Final Status":h["combined"]["status"]} for h in hist]
+        history_df=pd.DataFrame(tidy)
+        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        if len(hist)>1:
+            fig=go.Figure()
+            fig.add_trace(go.Scatter(x=list(range(len(hist))),
+                                     y=[h["combined"]["combined_probability"] for h in hist],
+                                     mode="lines+markers", name="Combined Risk",
+                                     line=dict(color="#6366f1", width=3),
+                                     marker=dict(size=8, color="#6366f1"),
+                                     text=[h["ticker"] for h in hist],
+                                     hovertemplate="<b>%{text}</b><br>Risk: %{y:.2f}%<extra></extra>"))
+            fig.update_layout(title="Analysis Timeline - Risk Progression", template="plotly_dark", height=400,
+                              margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                              font=dict(color="#cbd5e1"), xaxis_title="Analysis #", yaxis_title="Bankruptcy Risk %")
+            fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+            fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    else:
+        st.info("📊 No analysis history yet. Start by analyzing a company in the Analyze tab.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# -------------------------------
+# EXPORT TAB
+# -------------------------------
+with tabs[5]:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### 📥 Export Analysis Results")
+    if st.session_state.history:
+        last = st.session_state.history[-1]
+        st.markdown(f"<div class='small'><strong>Latest Analysis:</strong><br><strong>Company:</strong> {last['company_name']}<br><strong>Ticker:</strong> {last['ticker']}<br><strong>Status:</strong> {last['combined']['status']}<br><strong>Risk:</strong> {last['combined']['combined_probability']}%</div>", unsafe_allow_html=True)
+        out = _csv_from_history_last()
+        col1,col2 = st.columns(2)
+        with col1:
+            st.download_button("📥 Download Latest Analysis (CSV)", data=out,
+                               file_name=f"{last['ticker']}_bankruptcy_analysis_{datetime.now().strftime('%Y%m%d')}.csv",
+                               mime="text/csv", use_container_width=True, type="primary")
+        with col2:
+            if len(st.session_state.history)>1:
+                all_hist=[{"Timestamp":h["ts"],"Ticker":h["ticker"],"Company":h["company_name"],"Sector":h["sector"],
+                           "Z-Score":h["altman"]["score"],"Z-Status":h["altman"]["status"],
+                           "ML_Risk_%":h["ml"]["probability_bankrupt"],"Combined_%":h["combined"]["combined_probability"],
+                           "Status":h["combined"]["status"],"Risk_Level":h["combined"]["risk_level"]} for h in st.session_state.history]
+                csv_all = pd.DataFrame(all_hist).to_csv(index=False).encode("utf-8")
+                st.download_button("📥 Download Full History (CSV)", data=csv_all,
+                                   file_name=f"bankruptcy_history_{datetime.now().strftime('%Y%m%d')}.csv",
+                                   mime="text/csv", use_container_width=True)
+    else:
+        st.info("📊 No analysis results to export. Run an analysis first.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# -------------------------------
+# FOOTER
+# -------------------------------
+st.markdown("""
+<div style="text-align:center;margin-top:24px;padding:16px;border-top:1px solid rgba(99,102,241,.2);color:#94a3b8">
+  <p><strong>Powered by:</strong> Altman Z-Score | ML (LR, RF, GB, XGBoost)</p>
+  <p><strong>Data Source:</strong> Yahoo Finance via yfinance</p>
+  <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
+</div>
+""", unsafe_allow_html=True)
+# CHARTS (FIXED)
+# -------------------------------
+def chart_price(df: pd.DataFrame, ticker: str):
+    """FIXED: Price chart with robust handling"""
+    if df is None or df.empty:
+        return None
+
+    try:
+        # Ensure we have the Date column
+        if "Date" not in df.columns:
+            return None
+        
+        df = df.copy()
+        df = df[df["Date"].notna()].sort_values("Date").reset_index(drop=True)
+        
+        if df.empty:
+            return None
+
+        # Check for OHLC data
+        have_ohlc = all(c in df.columns for c in ["Open", "High", "Low", "Close"])
+        
+        fig = make_subplots(
+            rows=2, cols=1, 
+            row_heights=[0.7, 0.3], 
+            vertical_spacing=0.05,
+            subplot_titles=(f"{ticker} Stock Price", "Volume")
+        )
+
+        # Add price trace
+        if have_ohlc:
+            # Candlestick chart
+            valid_ohlc = df.dropna(subset=["Open", "High", "Low", "Close"])
+            if not valid_ohlc.empty:
+                fig.add_trace(go.Candlestick(
+                    x=valid_ohlc["Date"],
+                    open=valid_ohlc["Open"],
+                    high=valid_ohlc["High"],
+                    low=valid_ohlc["Low"],
+                    close=valid_ohlc["Close"],
+                    name="Price",
+                    increasing_line_color="#10b981",
+                    decreasing_line_color="#ef4444"
+                ), row=1, col=1)
+            else:
+                have_ohlc = False
+
+        if not have_ohlc:
+            # Line chart fallback
+            price_col = "Close"
+            if "Close" not in df.columns and "Adj Close" in df.columns:
+                price_col = "Adj Close"
+            elif "Close" not in df.columns:
+                return None
+            
+            valid_price = df.dropna(subset=[price_col])
+            if valid_price.empty:
+                return None
+                
+            fig.add_trace(go.Scatter(
+                x=valid_price["Date"],
+                y=valid_price[price_col],
+                mode="lines",
+                name=price_col,
+                line=dict(color="#6366f1", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(99,102,241,0.1)"
+            ), row=1, col=1)
+
+        # Add volume if available
+        if "Volume" in df.columns:
+            valid_vol = df[df["Volume"].notna()].copy()
+            if not valid_vol.empty:
+                # Create color array for volume bars
+                if have_ohlc:
+                    # Color based on close vs open
+                    colors = []
+                    for idx, row in valid_vol.iterrows():
+                        if pd.notna(row.get("Close")) and pd.notna(row.get("Open")):
+                            color = "#10b981" if row["Close"] >= row["Open"] else "#ef4444"
+                        else:
+                            color = "#6366f1"
+                        colors.append(color)
+                else:
+                    colors = ["#6366f1"] * len(valid_vol)
+                
+                fig.add_trace(go.Bar(
+                    x=valid_vol["Date"],
+                    y=valid_vol["Volume"],
+                    name="Volume",
+                    marker_color=colors,
+                    opacity=0.5
+                ), row=2, col=1)
+
+        # Update layout
+        fig.update_layout(
+            template="plotly_dark",
+            height=520,
+            margin=dict(l=20, r=20, t=60, b=20),
+            xaxis_rangeslider_visible=False,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#cbd5e1"),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Chart error: {str(e)}")
+        return None
+
+def chart_z_components(components: dict):
+    df = pd.DataFrame({"Component": list(components.keys()), "Value": list(components.values())})
+    colors = ['#6366f1' if v>=0 else '#ef4444' for v in df['Value']]
+    fig = go.Figure([go.Bar(x=df["Component"], y=df["Value"], marker_color=colors,
+                            text=df["Value"].round(3), textposition="outside")])
+    fig.update_layout(title="Altman Z-Score Components", template="plotly_dark", height=400,
+                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)",
+                      plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"), showlegend=False)
+    fig.update_xaxes(showgrid=False, tickangle=-45)
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+    return fig
+
+def chart_ratio_radar(r: dict):
+    keys = ["current_ratio","quick_ratio","cash_ratio","debt_to_equity","interest_coverage","profit_margin","operating_margin","asset_turnover"]
+    labels = ["Current Ratio","Quick Ratio","Cash Ratio","Debt/Equity","Interest Coverage","Profit Margin","Operating Margin","Asset Turnover"]
+    vals = [float(r.get(k,0) or 0) for k in keys]
+    clipped=[]
+    for k,v in zip(keys,vals):
+        if k in ("debt_to_equity","interest_coverage"): clipped.append(min(v,10.0))
+        elif k in ("profit_margin","operating_margin"): clipped.append(min(max(v,-50),50))
+        else: clipped.append(min(v,5.0))
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(r=clipped, theta=labels, fill="toself", name="Ratios",
+                                  line=dict(color="#6366f1", width=2), fillcolor="rgba(99,102,241,0.3)"))
+    fig.update_layout(template="plotly_dark", title="Key Financial Ratios Overview", height=450,
+                      polar=dict(radialaxis=dict(visible=True, gridcolor="rgba(99,102,241,0.2)"),
+                                 angularaxis=dict(gridcolor="rgba(99,102,241,0.2)"),
+                                 bgcolor="rgba(0,0,0,0)"),
+                      margin=dict(l=80,r=80,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
+    return fig
+
+def chart_model_probs(ml: dict):
+    rows=[{"Model":k.replace("_"," ").title(),"Bankrupt":v["probability_bankrupt"],"Safe":v["probability_safe"]}
+          for k,v in ml["individual_models"].items()]
+    df=pd.DataFrame(rows)
+    fig=go.Figure()
+    fig.add_trace(go.Bar(name="Bankruptcy Risk", x=df["Model"], y=df["Bankrupt"], marker_color="#ef4444",
+                         text=df["Bankrupt"].round(1), texttemplate="%{text}%", textposition="outside"))
+    fig.add_trace(go.Bar(name="Safe", x=df["Model"], y=df["Safe"], marker_color="#10b981",
+                         text=df["Safe"].round(1), texttemplate="%{text}%", textposition="outside"))
+    fig.update_layout(title="Model Predictions Comparison", template="plotly_dark", height=400, barmode="group",
+                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color="#cbd5e1"), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
+    return fig
+
+def chart_rf_importance(importances):
+    if not importances: return None
+    df = pd.DataFrame({"Feature":[f.replace("_"," ").title() for f in FEATURES], "Importance":importances}).sort_values("Importance").tail(12)
+    colors = ['#6366f1' if i%2==0 else '#8b5cf6' for i in range(len(df))]
+    fig = go.Figure([go.Bar(x=df["Importance"], y=df["Feature"], orientation="h", marker_color=colors,
+                            text=df["Importance"].round(3), texttemplate="%{text}", textposition="outside")])
+    fig.update_layout(title="Random Forest Feature Importance (Top 12)", template="plotly_dark", height=500,
+                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color="#cbd5e1"), showlegend=False)
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+    fig.update_yaxes(showgrid=False)
+    return fig
+
+def chart_z_gauge(z_score: float):
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number+delta", value=z_score, domain={'x':[0,1],'y':[0,1]},
+        title={'text':"Altman Z-Score",'font':{'size':20,'color':'#cbd5e1'}},
+        number={'font':{'size':42,'color':'#f8fafc'}},
+        gauge={'axis':{'range':[None,5],'tickwidth':1,'tickcolor':"#cbd5e1"},
+               'bar':{'color':"#6366f1"},
+               'bgcolor':"rgba(20,27,61,.5)", 'borderwidth':2,'bordercolor':"rgba(99,102,241,.3)",
+               'steps':[{'range':[0,1.81],'color':'rgba(239,68,68,.3)'},
+                        {'range':[1.81,2.99],'color':'rgba(245,158,11,.3)'},
+                        {'range':[2.99,5],'color':'rgba(16,185,129,.3)'}],
+               'threshold':{'line':{'color':"white",'width':4},'thickness':0.75,'value':z_score}}
+    ))
+    fig.update_layout(template="plotly_dark", height=320, margin=dict(l=20,r=20,t=60,b=20),
+                      paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
+    return fig
+
+def chart_sector_risk(stats: dict):
+    """FIXED: Added missing function for sector risk visualization"""
+    if not stats or "risk_dist" not in stats:
+        return None
+    
+    dist = stats["risk_dist"]
+    labels = ["Safe", "Gray Zone", "Distress"]
+    values = [dist.get("safe", 0), dist.get("gray", 0), dist.get("distress", 0)]
+    colors = ["#10b981", "#f59e0b", "#ef4444"]
+    
+    fig = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.4,
+        marker_colors=colors,
+        textinfo='label+percent',
+        textposition='outside'
+    )])
+    
+    fig.update_layout(
+        title=f"Risk Distribution ({stats['n']} Companies)",
+        template="plotly_dark",
+        height=400,
+        margin=dict(l=20, r=20, t=60, b=20),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#cbd5e1"),
+        showlegend=True
+    )
+    
+    return fig
 
 # -------------------------------
 # CONFIG & THEME
@@ -145,7 +740,7 @@ def _csv_from_history_last():
                             last["ml"], last["combined"])
 
 # -------------------------------
-# YFINANCE FETCHERS (robust)
+# YFINANCE FETCHERS (FIXED & ROBUST)
 # -------------------------------
 def _first_nonempty_df(obj, attr_names):
     for nm in attr_names:
@@ -202,79 +797,84 @@ def fetch_yahoo_financials(ticker: str, prefer: str = "auto", retries: int = 2, 
 @st.cache_data(show_spinner=False, ttl=60*15)
 def fetch_price_history(ticker: str, years: int = 5, retries: int = 3, pause: float = 0.7) -> pd.DataFrame:
     """
-    Robust price fetch:
-    1) yf.download(period=f'{years}y')
-    2) tkr.history(period=f'{years}y')
-    3) tkr.history(start=..., end=...) range
-    Normalizes date, coerces numerics, sorts, returns empty DataFrame if all fail.
+    FIXED: Robust price fetch with multiple fallback strategies
     """
     if yf is None:
-        st.session_state._last_price_fetch_error = "yfinance not installed"
         return pd.DataFrame()
 
     last_err = None
-    period = f"{years}y"
-    for attempt in range(retries+1):
+    
+    for attempt in range(retries):
         try:
-            # Attempt 1: yf.download
-            df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+            # Method 1: Direct download with period
+            df = yf.download(ticker, period=f"{years}y", auto_adjust=True, progress=False, ignore_tz=True)
+            
             if isinstance(df, pd.DataFrame) and not df.empty:
                 df = df.reset_index()
-            else:
-                df = pd.DataFrame()
-
-            # Attempt 2: Ticker.history(period=..)
-            if df.empty:
-                tkr = yf.Ticker(ticker)
-                h = tkr.history(period=period, auto_adjust=True)
-                if isinstance(h, pd.DataFrame) and not h.empty:
-                    df = h.reset_index()
-
-            # Attempt 3: explicit date range (handles odd timezone/index issues)
-            if df.empty:
-                tkr = yf.Ticker(ticker)
-                end = pd.Timestamp.utcnow().normalize()
-                start = end - pd.Timedelta(days=int(years*365.25))
-                h = tkr.history(start=start.tz_localize(None), end=end.tz_localize(None), interval="1d", auto_adjust=True)
-                if isinstance(h, pd.DataFrame) and not h.empty:
-                    df = h.reset_index()
-
-            if df.empty:
-                raise ValueError("All price fetch attempts returned empty data")
-
-            # Normalize date column name
-            if "Date" not in df.columns:
-                # Sometimes the first column is called Datetime or index renamed
-                for cand in ["Datetime","date","Index","index"]:
-                    if cand in df.columns:
-                        df = df.rename(columns={cand:"Date"})
-                        break
-            if "Date" not in df.columns:
-                # fall back to the first column
-                df = df.rename(columns={df.columns[0]:"Date"})
-
-            # Parse Date and ensure monotonic sort
-            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-            df = df[df["Date"].notna()].copy()
-            if df.empty:
-                raise ValueError("Price rows present but Date parsing failed")
-
-            # Coerce numeric OHLCV
-            for col in ["Open","High","Low","Close","Adj Close","Volume"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-            df = df.sort_values("Date").reset_index(drop=True)
-
-            # Clear any previous error
-            if "_last_price_fetch_error" in st.session_state:
-                st.session_state.pop("_last_price_fetch_error", None)
-            return df
-
+                
+                # Normalize column names
+                if "Date" not in df.columns and "Datetime" in df.columns:
+                    df = df.rename(columns={"Datetime": "Date"})
+                elif "Date" not in df.columns:
+                    df = df.rename(columns={df.columns[0]: "Date"})
+                
+                # Parse dates
+                df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True)
+                if df["Date"].dt.tz is not None:
+                    df["Date"] = df["Date"].dt.tz_localize(None)
+                
+                df = df[df["Date"].notna()].copy()
+                
+                if df.empty:
+                    raise ValueError("Date parsing resulted in empty DataFrame")
+                
+                # Ensure numeric columns
+                numeric_cols = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+                for col in numeric_cols:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors="coerce")
+                
+                # Sort by date
+                df = df.sort_values("Date").reset_index(drop=True)
+                
+                # Verify we have price data
+                price_cols = [c for c in ["Close", "Adj Close"] if c in df.columns]
+                if price_cols and df[price_cols[0]].notna().any():
+                    return df
+            
+            # Method 2: Ticker.history with period
+            tkr = yf.Ticker(ticker)
+            df = tkr.history(period=f"{years}y", auto_adjust=True)
+            
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                df = df.reset_index()
+                
+                if "Date" not in df.columns:
+                    df = df.rename(columns={df.columns[0]: "Date"})
+                
+                df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+                if df["Date"].dt.tz is not None:
+                    df["Date"] = df["Date"].dt.tz_localize(None)
+                
+                df = df[df["Date"].notna()].copy()
+                
+                for col in ["Open", "High", "Low", "Close", "Volume"]:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors="coerce")
+                
+                df = df.sort_values("Date").reset_index(drop=True)
+                
+                if not df.empty and "Close" in df.columns and df["Close"].notna().any():
+                    return df
+            
+            raise ValueError("All fetch methods returned empty data")
+            
         except Exception as e:
             last_err = e
-            time.sleep(pause)
-
-    st.session_state._last_price_fetch_error = str(last_err)
+            if attempt < retries - 1:
+                time.sleep(pause)
+    
+    # Return empty DataFrame on failure
     return pd.DataFrame()
 
 # -------------------------------
@@ -485,505 +1085,3 @@ def sector_stats(sector):
                          "distress":int(sum(1 for x in z if x<1.81))},
             "rows":rows}
 
-# -------------------------------
-# CHARTS
-# -------------------------------
-def chart_price(df: pd.DataFrame, ticker: str):
-    """Price (candles/line) + volume (defensive & vectorized)."""
-    if df is None or df.empty: return None
-
-    date_col = "Date" if "Date" in df.columns else df.columns[0]
-    df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    df = df[df[date_col].notna()].sort_values(date_col).reset_index(drop=True)
-    if df.empty: return None
-
-    have_ohlc = all(c in df.columns for c in ["Open","High","Low","Close"])
-
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.7,0.3], vertical_spacing=0.05,
-                        subplot_titles=(f"{ticker} Stock Price","Volume"))
-
-    if have_ohlc:
-        for c in ["Open","High","Low","Close"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        ohlc = df.dropna(subset=["Open","High","Low","Close"])
-        if not ohlc.empty:
-            fig.add_trace(go.Candlestick(
-                x=ohlc[date_col], open=ohlc["Open"], high=ohlc["High"], low=ohlc["Low"], close=ohlc["Close"],
-                name="Price", increasing_line_color="#10b981", decreasing_line_color="#ef4444"
-            ), row=1, col=1)
-        else:
-            have_ohlc = False
-
-    if not have_ohlc:
-        y_series = "Adj Close" if "Adj Close" in df.columns else ("Close" if "Close" in df.columns else df.columns[1])
-        df[y_series] = pd.to_numeric(df[y_series], errors="coerce")
-        line = df.dropna(subset=[y_series])
-        if line.empty: return None
-        fig.add_trace(go.Scatter(
-            x=line[date_col], y=line[y_series], mode="lines", name=y_series,
-            line=dict(color="#6366f1", width=2), fill="tozeroy", fillcolor="rgba(99,102,241,0.1)"
-        ), row=1, col=1)
-
-    if "Volume" in df.columns:
-        df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0)
-        if have_ohlc:
-            # Vectorized color mask (no ambiguous truth-value)
-            up_mask = (df["Close"].fillna(method="ffill") >= df["Open"].fillna(method="ffill")).astype(bool)
-            colors = np.where(up_mask, "#10b981", "#ef4444").tolist()
-        else:
-            colors = ["#6366f1"]*len(df)
-        fig.add_trace(go.Bar(x=df[date_col], y=df["Volume"], name="Volume",
-                             marker_color=colors, opacity=0.5), row=2, col=1)
-
-    fig.update_layout(template="plotly_dark", height=520, margin=dict(l=20,r=20,t=60,b=20),
-                      xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)",
-                      plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"),
-                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
-    return fig
-
-def chart_z_components(components: dict):
-    df = pd.DataFrame({"Component": list(components.keys()), "Value": list(components.values())})
-    colors = ['#6366f1' if v>=0 else '#ef4444' for v in df['Value']]
-    fig = go.Figure([go.Bar(x=df["Component"], y=df["Value"], marker_color=colors,
-                            text=df["Value"].round(3), textposition="outside")])
-    fig.update_layout(title="Altman Z-Score Components", template="plotly_dark", height=400,
-                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)",
-                      plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"), showlegend=False)
-    fig.update_xaxes(showgrid=False, tickangle=-45)
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
-    return fig
-
-def chart_ratio_radar(r: dict):
-    keys = ["current_ratio","quick_ratio","cash_ratio","debt_to_equity","interest_coverage","profit_margin","operating_margin","asset_turnover"]
-    labels = ["Current Ratio","Quick Ratio","Cash Ratio","Debt/Equity","Interest Coverage","Profit Margin","Operating Margin","Asset Turnover"]
-    vals = [float(r.get(k,0) or 0) for k in keys]
-    clipped=[]
-    for k,v in zip(keys,vals):
-        if k in ("debt_to_equity","interest_coverage"): clipped.append(min(v,10.0))
-        elif k in ("profit_margin","operating_margin"): clipped.append(min(max(v,-50),50))
-        else: clipped.append(min(v,5.0))
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=clipped, theta=labels, fill="toself", name="Ratios",
-                                  line=dict(color="#6366f1", width=2), fillcolor="rgba(99,102,241,0.3)"))
-    fig.update_layout(template="plotly_dark", title="Key Financial Ratios Overview", height=450,
-                      polar=dict(radialaxis=dict(visible=True, gridcolor="rgba(99,102,241,0.2)"),
-                                 angularaxis=dict(gridcolor="rgba(99,102,241,0.2)"),
-                                 bgcolor="rgba(0,0,0,0)"),
-                      margin=dict(l=80,r=80,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
-    return fig
-
-def chart_model_probs(ml: dict):
-    rows=[{"Model":k.replace("_"," ").title(),"Bankrupt":v["probability_bankrupt"],"Safe":v["probability_safe"]}
-          for k,v in ml["individual_models"].items()]
-    df=pd.DataFrame(rows)
-    fig=go.Figure()
-    fig.add_trace(go.Bar(name="Bankruptcy Risk", x=df["Model"], y=df["Bankrupt"], marker_color="#ef4444",
-                         text=df["Bankrupt"].round(1), texttemplate="%{text}%", textposition="outside"))
-    fig.add_trace(go.Bar(name="Safe", x=df["Model"], y=df["Safe"], marker_color="#10b981",
-                         text=df["Safe"].round(1), texttemplate="%{text}%", textposition="outside"))
-    fig.update_layout(title="Model Predictions Comparison", template="plotly_dark", height=400, barmode="group",
-                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color="#cbd5e1"), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
-    return fig
-
-def chart_rf_importance(importances):
-    if not importances: return None
-    df = pd.DataFrame({"Feature":[f.replace("_"," ").title() for f in FEATURES], "Importance":importances}).sort_values("Importance").tail(12)
-    colors = ['#6366f1' if i%2==0 else '#8b5cf6' for i in range(len(df))]
-    fig = go.Figure([go.Bar(x=df["Importance"], y=df["Feature"], orientation="h", marker_color=colors,
-                            text=df["Importance"].round(3), texttemplate="%{text}", textposition="outside")])
-    fig.update_layout(title="Random Forest Feature Importance (Top 12)", template="plotly_dark", height=500,
-                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color="#cbd5e1"), showlegend=False)
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
-    fig.update_yaxes(showgrid=False)
-    return fig
-
-def chart_z_gauge(z_score: float):
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta", value=z_score, domain={'x':[0,1],'y':[0,1]},
-        title={'text':"Altman Z-Score",'font':{'size':20,'color':'#cbd5e1'}},
-        number={'font':{'size':42,'color':'#f8fafc'}},
-        gauge={'axis':{'range':[None,5],'tickwidth':1,'tickcolor':"#cbd5e1"},
-               'bar':{'color':"#6366f1"},
-               'bgcolor':"rgba(20,27,61,.5)", 'borderwidth':2,'bordercolor':"rgba(99,102,241,.3)",
-               'steps':[{'range':[0,1.81],'color':'rgba(239,68,68,.3)'},
-                        {'range':[1.81,2.99],'color':'rgba(245,158,11,.3)'},
-                        {'range':[2.99,5],'color':'rgba(16,185,129,.3)'}],
-               'threshold':{'line':{'color':"white",'width':4},'thickness':0.75,'value':z_score}}
-    ))
-    fig.update_layout(template="plotly_dark", height=320, margin=dict(l=20,r=20,t=60,b=20),
-                      paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
-    return fig
-
-# -------------------------------
-# UI: Sidebar
-# -------------------------------
-with st.sidebar:
-    st.markdown("## ⚙️ Configuration")
-    prefer = st.selectbox("📊 Financials Preference", ["auto","annual","quarterly"], index=0)
-    price_years = st.select_slider("📈 Price History (years)", options=[1,2,3,5,10], value=5)
-    show_price_debug = st.checkbox("Show price debug", value=False)
-    st.markdown("---")
-    st.markdown("### 📊 Model Info")
-    pack = build_models()
-    st.metric("Active Models", len(pack["models"]))
-    st.metric("Training Samples", "1,000")
-    if st.session_state.history:
-        st.markdown("---")
-        st.metric("Analyses Run", len(st.session_state.history))
-    st.markdown("---")
-    st.markdown("<div class='small'>Tip: use exchange suffixes for non-US tickers (e.g., RELIANCE.NS, SHOP.TO, VOD.L)</div>", unsafe_allow_html=True)
-
-# -------------------------------
-# HEADER & TABS
-# -------------------------------
-st.markdown("""
-<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">
-  <div style="font-size:20px;color:#f8fafc;font-weight:700">🏛️ Bankruptcy Prediction Dashboard</div>
-  <div style="color:#cbd5e1">Advanced Financial Analysis Using ML & Altman Z-Score</div>
-</div>
-""", unsafe_allow_html=True)
-tabs = st.tabs(["🔍 Analyze","⚖️ Compare","🏢 Industry","🤖 Models","📜 History","📥 Export"])
-
-# -------------------------------
-# ANALYZE TAB
-# -------------------------------
-with tabs[0]:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("### 📊 Enter Stock Ticker")
-    col_inp, col_btn = st.columns([4,1])
-    with col_inp:
-        user_raw = st.text_input("Stock Ticker", value="", placeholder="e.g., AAPL, RELIANCE.NS, SHOP.TO", label_visibility="collapsed")
-    with col_btn:
-        go_btn = st.button("🔍 Analyze", use_container_width=True, type="primary")
-
-    st.markdown('<div class="small" style="margin-top:12px;">Quick Select:</div>', unsafe_allow_html=True)
-    qcols = st.columns(8)
-    selected_quick=None
-    for t, col in zip(["AAPL","MSFT","TSLA","AMZN","META","GOOGL","JPM","BAC"], qcols):
-        with col:
-            if st.button(t, key=f"quick_{t}", use_container_width=True):
-                selected_quick = t
-
-    ticker = selected_quick if selected_quick else (normalize_tickers(user_raw)[0] if user_raw else None)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    if (go_btn or selected_quick) and ticker:
-        with st.spinner(f"🔄 Analyzing {ticker}..."):
-            try:
-                base = collect_financial_data(ticker, prefer=prefer)
-                ratios = compute_ratios(base)
-                z, zcomp = altman_z(ratios)
-                z_status, z_risk, _ = z_classify(z)
-                z_prob = z_probability(z)
-                ml = predict_all(ratios)
-                comb = combined_assessment(z, ml)
-                record_industry(base["sector"], ticker, z, ml["probability_bankrupt"])
-
-                result = {
-                    "ticker": ticker,
-                    "company_name": base["company_name"],
-                    "sector": base["sector"],
-                    "industry": base["industry"],
-                    "altman": {"score": round(z,2), "status": z_status, "risk": z_risk, "prob": z_prob, "components": zcomp},
-                    "ml": ml,
-                    "combined": comb,
-                    "ratios": {k:(round(v,4) if abs(v)<100 else round(v,2)) for k,v in ratios.items()},
-                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                st.session_state.history.append(result)
-
-                st.success(f"✅ Successfully analyzed {base['company_name']} ({ticker})")
-                st.markdown("---")
-
-                c1,c2 = st.columns([1.4,1])
-                with c1:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    left,right = st.columns([3,1])
-                    with left:
-                        st.markdown(f"## {base['company_name']}")
-                        st.markdown(f"**Ticker:** {ticker} &nbsp;&nbsp; **Sector:** {base['sector']}")
-                    with right:
-                        csv_bytes = _csv_from_result(ticker, {"company_name": base["company_name"], "sector": base["sector"]},
-                                                    ratios, z, z_prob, ml, comb)
-                        st.download_button("📥 Export", data=csv_bytes, file_name=f"{ticker}_analysis.csv", mime="text/csv", use_container_width=True)
-                    m1,m2,m3 = st.columns(3)
-                    with m1:
-                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Market Cap</div><div class="metric-value">{fmt_curr(base.get('market_cap',0))}</div></div>""", unsafe_allow_html=True)
-                    with m2:
-                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Stock Price</div><div class="metric-value">{fmt_curr(base.get('stock_price',0))}</div></div>""", unsafe_allow_html=True)
-                    with m3:
-                        ind = base['industry'] if base['industry'] else "—"
-                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Industry</div><div class="metric-value" style="font-size:1.0rem">{ind[:20]}</div></div>""", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with c2:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.markdown("## 🎯 Risk Assessment")
-                    badge = "safe" if comb["status"]=="Safe" else ("gray" if comb["status"]=="Gray Zone" else "distress")
-                    st.markdown(f'<div class="badge {badge}" style="margin:12px 0;">{comb["status"]}</div>', unsafe_allow_html=True)
-                    b1,b2 = st.columns(2)
-                    with b1:
-                        st.metric("Risk Level", comb["risk_level"])
-                        st.metric("Agreement", "✓ Yes" if comb["model_agreement"] else "✗ No")
-                    with b2:
-                        st.metric("Combined Risk", f"{comb['combined_probability']}%")
-                        st.metric("Confidence", f"{ml['confidence']}%")
-                    bar = "safe" if comb["combined_probability"]<20 else ("warning" if comb["combined_probability"]<50 else "danger")
-                    st.markdown(f"""<div class="progress-container" style="margin-top:12px;"><div class="progress-bar {bar}" style="width:{int(comb['combined_probability'])}%"></div></div>""", unsafe_allow_html=True)
-                    st.markdown(f"<div class='small' style='margin-top:8px'>{comb['recommendation']}</div>", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                m1,m2 = st.columns([1,2])
-                with m1:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.plotly_chart(chart_z_gauge(z), use_container_width=True, config={"displayModeBar": False})
-                    st.markdown(f"<div class='small'><strong>Status:</strong> {z_status}<br><strong>Risk:</strong> {z_risk}<br><strong>Probability:</strong> {z_prob}%</div>", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with m2:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    price_df = fetch_price_history(ticker, years=price_years)
-                    fig_price = chart_price(price_df, ticker)
-                    if fig_price:
-                        st.plotly_chart(fig_price, use_container_width=True, config={"displayModeBar": False})
-                    else:
-                        st.info("📊 Price history not available for this ticker.")
-                        if show_price_debug:
-                            st.markdown("**Price fetch debug**")
-                            err = st.session_state.get("_last_price_fetch_error")
-                            if err: st.markdown(f"- Last fetch error: `{err}`")
-                            if isinstance(price_df, pd.DataFrame):
-                                st.markdown(f"- DataFrame shape: {price_df.shape}")
-                                st.markdown(f"- Columns: {list(price_df.columns)}")
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                ch1,ch2 = st.columns(2)
-                with ch1:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.plotly_chart(chart_z_components(zcomp), use_container_width=True, config={"displayModeBar": False})
-                    st.markdown("</div>", unsafe_allow_html=True)
-                with ch2:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.plotly_chart(chart_ratio_radar(ratios), use_container_width=True, config={"displayModeBar": False})
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                bt1,bt2 = st.columns(2)
-                with bt1:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.markdown("### 🤖 ML Model Predictions")
-                    st.plotly_chart(chart_model_probs(ml), use_container_width=True, config={"displayModeBar": False})
-                    mdl_df = pd.DataFrame([{"Model":k.replace("_"," ").title(),"Risk %":f"{v['probability_bankrupt']}%","Safe %":f"{v['probability_safe']}%","Prediction":v['risk_label']} for k,v in ml["individual_models"].items()])
-                    st.dataframe(mdl_df, use_container_width=True, hide_index=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-                with bt2:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    if ml.get("rf_features"):
-                        fi_fig = chart_rf_importance(ml["rf_features"])
-                        if fi_fig: st.plotly_chart(fi_fig, use_container_width=True, config={"displayModeBar": False})
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.markdown("### 📊 Complete Financial Ratios")
-                ratio_categories = {
-                    "Altman Z Components":["working_capital_to_assets","retained_earnings_to_assets","ebit_to_assets","market_cap_to_liabilities","sales_to_assets"],
-                    "Liquidity Ratios":["current_ratio","quick_ratio","cash_ratio"],
-                    "Leverage Ratios":["debt_to_equity","debt_to_assets","long_term_debt_to_equity","interest_coverage"],
-                    "Profitability Ratios":["return_on_assets","return_on_equity","profit_margin","gross_margin","operating_margin","ebitda_margin"],
-                    "Efficiency Ratios":["asset_turnover","receivables_turnover","inventory_turnover"],
-                    "Cash Flow Ratios":["operating_cashflow_to_sales","free_cashflow_to_equity","capex_to_revenue"]
-                }
-                cols = st.columns(len(ratio_categories))
-                for idx,(category,keys) in enumerate(ratio_categories.items()):
-                    with cols[idx]:
-                        st.markdown(f"**{category}**")
-                        data=[{"Metric":k.replace("_"," ").title(),"Value":result["ratios"][k]} for k in keys if k in result["ratios"]]
-                        if data: st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True, height=240)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            except Exception as e:
-                st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.error(f"❌ Analysis failed for '{ticker}'")
-                st.exception(e)
-                st.markdown("<div class='small'>Troubleshooting: check ticker spelling, add exchange suffix (.NS, .TO, .L), ensure network and that yfinance is installed.</div>", unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-# -------------------------------
-# COMPARE TAB
-# -------------------------------
-with tabs[1]:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("### ⚖️ Compare Multiple Companies")
-    line = st.text_input("Enter tickers (comma separated)", value="AAPL, MSFT, TSLA, GOOGL", help="Enter up to 12 tickers separated by commas")
-    if st.button("🔍 Compare All", type="primary"):
-        tks = normalize_tickers(line)[:12]
-        with st.spinner(f"🔄 Analyzing {len(tks)} companies..."):
-            rows=[]; progress_bar = st.progress(0)
-            for i,tk in enumerate(tks):
-                try:
-                    base = collect_financial_data(tk, prefer=prefer)
-                    ratios = compute_ratios(base)
-                    z,_ = altman_z(ratios)
-                    ml = predict_all(ratios)
-                    comb = combined_assessment(z, ml)
-                    record_industry(base["sector"], tk, z, ml["probability_bankrupt"])
-                    rows.append({"Ticker":tk,"Company":base["company_name"],"Sector":base["sector"],
-                                 "Z-Score":round(z,2),"ML Risk %":ml["probability_bankrupt"],
-                                 "Combined %":comb["combined_probability"],"Status":comb["status"],"Risk Level":comb["risk_level"]})
-                except Exception as e:
-                    rows.append({"Ticker":tk,"Company":"Error","Sector":"-","Z-Score":None,"ML Risk %":None,"Combined %":None,"Status":f"Failed: {str(e)[:30]}","Risk Level":"-"})
-                progress_bar.progress((i+1)/max(len(tks),1))
-            progress_bar.empty()
-            if rows:
-                dfc=pd.DataFrame(rows)
-                st.dataframe(dfc, use_container_width=True, hide_index=True)
-                valid = dfc[dfc["Combined %"].notna()].copy()
-                if not valid.empty:
-                    colors=["#10b981" if s=="Safe" else "#f59e0b" if s=="Gray Zone" else "#ef4444" for s in valid["Status"]]
-                    fig=go.Figure([go.Bar(x=valid["Ticker"], y=valid["Combined %"], marker_color=colors,
-                                          text=valid["Combined %"].round(1), texttemplate="%{text}%", textposition="outside")])
-                    fig.update_layout(title="Combined Bankruptcy Risk Comparison", template="plotly_dark", height=450,
-                                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                      font=dict(color="#cbd5e1"), yaxis_title="Bankruptcy Risk %")
-                    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
-                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# -------------------------------
-# INDUSTRY TAB
-# -------------------------------
-with tabs[2]:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("### 🏢 Industry Analysis")
-    sectors = sorted(list(st.session_state.industry.keys()))
-    if sectors:
-        sec = st.selectbox("Select sector", [""]+sectors)
-        if sec:
-            stats = sector_stats(sec)
-            if stats:
-                m1,m2,m3,m4,m5 = st.columns(5)
-                labels = ["Companies","Avg Z-Score","Median Z","Min Z","Max Z"]
-                vals = [stats['n'],stats['z_mean'],stats['z_med'],stats['z_min'],stats['z_max']]
-                for col,label,val in zip([m1,m2,m3,m4,m5],labels,vals):
-                    with col:
-                        st.markdown(f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{val}</div></div>""", unsafe_allow_html=True)
-                st.plotly_chart(chart_sector_risk(stats), use_container_width=True, config={"displayModeBar": False})
-                st.markdown("#### Sector Companies")
-                st.dataframe(pd.DataFrame(stats["rows"]), use_container_width=True, hide_index=True)
-    else:
-        st.info("📊 No sector data available yet. Run some analyses to populate industry statistics.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# -------------------------------
-# MODELS TAB
-# -------------------------------
-with tabs[3]:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("### 🤖 Machine Learning Models Performance")
-    m = build_models()["metrics"]
-    rows=[{"Model":name.replace("_"," ").title(),
-           "Accuracy":f"{met['accuracy']*100:.2f}%","Precision":f"{met['precision']*100:.2f}%",
-           "Recall":f"{met['recall']*100:.2f}%","F1-Score":f"{met['f1']*100:.2f}%","ROC-AUC":f"{met['roc_auc']*100:.2f}%"}
-          for name,met in m.items()]
-    df_rows=pd.DataFrame(rows)
-    st.dataframe(df_rows, use_container_width=True, hide_index=True, height=250)
-    fig=go.Figure()
-    metrics_to_plot=["Accuracy","Precision","Recall","F1-Score","ROC-AUC"]
-    color_map={"Accuracy":"#6366f1","Precision":"#8b5cf6","Recall":"#ec4899","F1-Score":"#10b981","ROC-AUC":"#f59e0b"}
-    for metric in metrics_to_plot:
-        vals=[float(v.strip("%")) for v in df_rows[metric]]
-        fig.add_trace(go.Bar(name=metric, x=df_rows["Model"], y=vals, marker_color=color_map[metric]))
-    fig.update_layout(title="Model Performance Comparison", template="plotly_dark", height=450, barmode="group",
-                      margin=dict(l=20,r=20,t=60,b=80), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color="#cbd5e1"), legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
-                      yaxis_title="Score %")
-    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    st.markdown("<div class='small'>Training data: 1,000 synthetic samples (≈33% bankrupt). Ensemble: majority vote with probability averaging.</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# -------------------------------
-# HISTORY TAB
-# -------------------------------
-with tabs[4]:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("### 📜 Analysis History")
-    hist = st.session_state.history[-50:]
-    if hist:
-        tidy=[{"Timestamp":h["ts"],"Ticker":h["ticker"],"Company":h["company_name"],"Sector":h["sector"],
-               "Z-Score":h["altman"]["score"],"Z-Status":h["altman"]["status"],
-               "ML Risk %":h["ml"]["probability_bankrupt"],"Combined %":h["combined"]["combined_probability"],
-               "Final Status":h["combined"]["status"]} for h in hist]
-        history_df=pd.DataFrame(tidy)
-        st.dataframe(history_df, use_container_width=True, hide_index=True)
-        if len(hist)>1:
-            fig=go.Figure()
-            fig.add_trace(go.Scatter(x=list(range(len(hist))),
-                                     y=[h["combined"]["combined_probability"] for h in hist],
-                                     mode="lines+markers", name="Combined Risk",
-                                     line=dict(color="#6366f1", width=3),
-                                     marker=dict(size=8, color="#6366f1"),
-                                     text=[h["ticker"] for h in hist],
-                                     hovertemplate="<b>%{text}</b><br>Risk: %{y:.2f}%<extra></extra>"))
-            fig.update_layout(title="Analysis Timeline - Risk Progression", template="plotly_dark", height=400,
-                              margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                              font=dict(color="#cbd5e1"), xaxis_title="Analysis #", yaxis_title="Bankruptcy Risk %")
-            fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
-            fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    else:
-        st.info("📊 No analysis history yet. Start by analyzing a company in the Analyze tab.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# -------------------------------
-# EXPORT TAB
-# -------------------------------
-with tabs[5]:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("### 📥 Export Analysis Results")
-    if st.session_state.history:
-        last = st.session_state.history[-1]
-        st.markdown(f"<div class='small'><strong>Latest Analysis:</strong><br><strong>Company:</strong> {last['company_name']}<br><strong>Ticker:</strong> {last['ticker']}<br><strong>Status:</strong> {last['combined']['status']}<br><strong>Risk:</strong> {last['combined']['combined_probability']}%</div>", unsafe_allow_html=True)
-        out = _csv_from_history_last()
-        col1,col2 = st.columns(2)
-        with col1:
-            st.download_button("📥 Download Latest Analysis (CSV)", data=out,
-                               file_name=f\"{last['ticker']}_bankruptcy_analysis_{datetime.now().strftime('%Y%m%d')}.csv\",
-                               mime="text/csv", use_container_width=True, type="primary")
-        with col2:
-            if len(st.session_state.history)>1:
-                all_hist=[{"Timestamp":h["ts"],"Ticker":h["ticker"],"Company":h["company_name"],"Sector":h["sector"],
-                           "Z-Score":h["altman"]["score"],"Z-Status":h["altman"]["status"],
-                           "ML_Risk_%":h["ml"]["probability_bankrupt"],"Combined_%":h["combined"]["combined_probability"],
-                           "Status":h["combined"]["status"],"Risk_Level":h["combined"]["risk_level"]} for h in st.session_state.history]
-                csv_all = pd.DataFrame(all_hist).to_csv(index=False).encode("utf-8")
-                st.download_button("📥 Download Full History (CSV)", data=csv_all,
-                                   file_name=f\"bankruptcy_history_{datetime.now().strftime('%Y%m%d')}.csv\",
-                                   mime="text/csv", use_container_width=True)
-    else:
-        st.info("📊 No analysis results to export. Run an analysis first.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# -------------------------------
-# FOOTER
-# -------------------------------
-st.markdown("""
-<div style="text-align:center;margin-top:24px;padding:16px;border-top:1px solid rgba(99,102,241,.2);color:#94a3b8">
-  <p><strong>Powered by:</strong> Altman Z-Score | ML (LR, RF, GB, XGBoost)</p>
-  <p><strong>Data Source:</strong> Yahoo Finance via yfinance</p>
-  <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
-</div>
-""", unsafe_allow_html=True)
