@@ -53,34 +53,181 @@ st.set_page_config(
 # -------------------------------
 PRO_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+/* ---------- Fonts & Tokens ---------- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 :root{
-  --primary-bg:#0b0f2a; --secondary-bg:#12183a; --card-bg:rgba(20,27,61,.88);
-  --card-border:rgba(99,102,241,.25); --text:#f8fafc; --muted:#a3aed0;
-  --accent:#6366f1; --good:#10b981; --warn:#f59e0b; --bad:#ef4444;
+  /* Core palette */
+  --bg-0:#070a16;         /* base background */
+  --bg-1:#0b1130;         /* primary surface */
+  --bg-2:rgba(20,27,61,.85); /* glass layer */
+  --card:#0e163a;
+  --card-border:rgba(100,116,255,.18);
+  --elev-1:0 10px 30px rgba(2,8,23,.45), inset 0 1px 0 rgba(255,255,255,.03);
+
+  /* Text */
+  --text:#f7f9ff;
+  --muted:#a8b0d8;
+  --subtle:#93a0c6;
+
+  /* Accents */
+  --accent:#6c73ff;       /* primary indigo */
+  --accent-2:#7ce3ff;     /* cyan pop */
+  --ok:#16c172;           /* green */
+  --warn:#f59e0b;         /* amber */
+  --bad:#ef4444;          /* red */
+
+  /* Radii & spacing */
+  --r-sm:10px; --r-md:14px; --r-lg:18px; --r-xl:22px;
+  --pad:16px; --gap:12px;
+
+  /* Animation */
+  --dur:220ms; --bezier:cubic-bezier(.2,.7,.2,1);
 }
-*{font-family:'Inter',sans-serif}
+
+*{font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 html,body,[data-testid="stAppViewContainer"]{
-  background:radial-gradient(1200px 800px at 15% 10%, #101744 0%, #0b0f2a 35%, #080b1e 100%) fixed;
+  background:
+    radial-gradient(1200px 800px at 12% 10%, #132054 0%, #0c1337 38%, #070a16 100%) fixed,
+    linear-gradient(180deg, rgba(16,21,49,.6), rgba(7,10,22,.8)) fixed;
+  color:var(--text);
 }
 
-/* Cards */
-.card{background:var(--card-bg);border:1px solid var(--card-border);border-radius:16px;padding:16px}
-.metric-card{background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(15,23,42,.85));border-radius:12px;padding:12px;text-align:center;border:1px solid rgba(99,102,241,.18)}
-.metric-label{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-.metric-value{font-size:1.6rem;font-weight:700;color:var(--text)}
-.small{font-size:.86rem;color:var(--muted)}
-.badge{display:inline-block;padding:6px 10px;border-radius:8px;color:#fff;font-weight:600}
-.badge.safe{background:var(--good)}.badge.gray{background:var(--warn)}.badge.distress{background:var(--bad)}
-.progress-container{height:12px;background:rgba(255,255,255,.06);border-radius:8px;overflow:hidden}
-.progress-bar.safe{background:var(--good);height:100%}.progress-bar.warning{background:var(--warn);height:100%}.progress-bar.danger{background:var(--bad);height:100%}
+/* ---------- Global polish ---------- */
+h1,h2,h3 { letter-spacing:.2px; }
+h1{font-weight:800}
+h2{font-weight:700}
+p,li,small,span{ color:var(--muted) }
+a{ color:var(--accent-2); text-decoration:none }
+a:hover{opacity:.9}
 
-/* DataFrame dark styling */
-[data-testid="stDataFrame"] div, [data-testid="stTable"] div { color: var(--text) !important; }
+/* Smooth hover scale for cards/buttons */
+.hoverable{transition:transform var(--dur) var(--bezier), box-shadow var(--dur) var(--bezier)}
+.hoverable:hover{ transform:translateY(-2px) }
+
+/* ---------- Layout helpers ---------- */
+.container{display:grid; gap:var(--gap)}
+.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:1200px){ .grid-4{grid-template-columns:repeat(2,1fr)} }
+@media (max-width:900px){ .grid-3{grid-template-columns:1fr} .grid-2{grid-template-columns:1fr} }
+
+/* ---------- Cards & Surfaces ---------- */
+.card{
+  background:linear-gradient(180deg, rgba(108,115,255,.08), rgba(12,19,55,.72));
+  border:1px solid var(--card-border);
+  border-radius:var(--r-lg);
+  padding:18px;
+  box-shadow:var(--elev-1);
+  backdrop-filter: blur(8px);
+}
+.card.header{
+  background:linear-gradient(135deg, rgba(124,227,255,.10), rgba(108,115,255,.10));
+  border:1px solid rgba(124,227,255,.20);
+}
+
+/* ---------- Metric tiles ---------- */
+.metric{
+  background:linear-gradient(135deg, rgba(108,115,255,.12), rgba(20,25,55,.65));
+  border:1px solid rgba(108,115,255,.18);
+  border-radius:var(--r-md);
+  padding:14px;
+  text-align:left;
+  box-shadow:var(--elev-1);
+}
+.metric .label{
+  font-size:.78rem; color:var(--subtle); text-transform:uppercase; letter-spacing:.08em
+}
+.metric .value{
+  font-size:1.8rem; font-weight:800; color:var(--text); margin-top:6px
+}
+.metric .delta{ font-size:.9rem; margin-top:4px }
+.delta.up{ color:var(--ok) } .delta.flat{ color:var(--warn) } .delta.down{ color:var(--bad) }
+
+/* ---------- Badges, Chips ---------- */
+.badge{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:6px 10px; border-radius:10px; font-weight:700; color:#fff; font-size:.85rem;
+  background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  border:1px solid rgba(255,255,255,.08)
+}
+.badge.safe{ background:linear-gradient(180deg, rgba(22,193,114,.18), rgba(22,193,114,.10)); border-color:rgba(22,193,114,.35) }
+.badge.warn{ background:linear-gradient(180deg, rgba(245,158,11,.18), rgba(245,158,11,.10)); border-color:rgba(245,158,11,.35) }
+.badge.distress{ background:linear-gradient(180deg, rgba(239,68,68,.18), rgba(239,68,68,.10)); border-color:rgba(239,68,68,.35) }
+.chip{
+  display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
+  background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); color:var(--muted)
+}
+
+/* ---------- Progress ---------- */
+.progress{
+  background:rgba(255,255,255,.06); border-radius:999px; height:10px; overflow:hidden; border:1px solid rgba(255,255,255,.08)
+}
+.progress > span{ display:block; height:100%; transition:width var(--dur) var(--bezier) }
+.progress .ok{ background:linear-gradient(90deg, #12c36a, #4ade80) }
+.progress .warn{ background:linear-gradient(90deg, #f59e0b, #fbbf24) }
+.progress .bad{ background:linear-gradient(90deg, #ef4444, #f87171) }
+
+/* ---------- Buttons ---------- */
+.btn{
+  display:inline-flex; align-items:center; gap:10px;
+  padding:10px 14px; border-radius:var(--r-sm); font-weight:700; color:#fff; cursor:pointer;
+  background:linear-gradient(135deg, rgba(108,115,255,.35), rgba(124,227,255,.20));
+  border:1px solid rgba(124,227,255,.35);
+  transition:transform var(--dur) var(--bezier), box-shadow var(--dur) var(--bezier), opacity var(--dur) var(--bezier)
+}
+.btn:hover{ transform:translateY(-1px); opacity:.95 }
+.btn.ghost{ background:rgba(255,255,255,.04); border-color:rgba(255,255,255,.10); color:var(--accent-2) }
+
+/* ---------- Streamlit defaults polish ---------- */
+[data-testid="stHeader"]{
+  background:linear-gradient(90deg, rgba(124,227,255,.06), rgba(108,115,255,.06)) !important;
+  border-bottom:1px solid rgba(124,227,255,.14)
+}
+section[data-testid="stSidebar"]{
+  background:linear-gradient(180deg, rgba(10,15,33,.9), rgba(6,9,21,.95)) !important;
+  border-right:1px solid rgba(108,115,255,.12)
+}
+section[data-testid="stSidebar"] *{ color:var(--text) !important }
+
+/* Inputs */
+.stTextInput, .stNumberInput, .stSelectbox, .stDateInput, .stMultiSelect, .stTextArea {
+  filter: drop-shadow(0 8px 18px rgba(2,8,23,.35));
+}
+.st-emotion-cache-1cypcdb, .st-emotion-cache-1v0mbdj, .st-emotion-cache-1gulkj5{
+  /* defensive selectors for input boxes (Streamlit may change class names) */
+  background:rgba(255,255,255,.03) !important; border:1px solid rgba(255,255,255,.10) !important; border-radius:12px !important;
+}
+
+/* Tabs */
+[data-baseweb="tab-list"]{ border-bottom:1px solid rgba(255,255,255,.10) }
+[data-baseweb="tab"]{ color:var(--muted) }
+[data-baseweb="tab"][aria-selected="true"]{
+  color:var(--text); border-bottom:2px solid var(--accent) !important; background:linear-gradient(180deg, rgba(108,115,255,.10), rgba(108,115,255,.02))
+}
+
+/* DataFrames & Tables (dark) */
 [data-testid="stDataFrame"] { background: transparent !important; }
+[data-testid="stDataFrame"] div, [data-testid="stTable"] div { color: var(--text) !important; }
 [data-testid="stDataFrame"] [class*="row_heading"], 
-[data-testid="stDataFrame"] [class*="blank"] { background: rgba(15,23,42,.5) !important; }
-[data-testid="stDataFrame"] [class*="column_heading"] { background: rgba(15,23,42,.7) !important; }
+[data-testid="stDataFrame"] [class*="blank"] { background: rgba(14,22,58,.6) !important; }
+[data-testid="stDataFrame"] [class*="column_heading"] { 
+  background: linear-gradient(180deg, rgba(108,115,255,.10), rgba(14,22,58,.65)) !important; 
+  color:var(--text)!important; font-weight:700 !important; border-bottom:1px solid rgba(124,227,255,.12)!important;
+}
+[data-testid="stTable"] td, [data-testid="stTable"] th{
+  border-color: rgba(255,255,255,.08) !important;
+}
+
+/* Code blocks */
+pre, code { background: rgba(255,255,255,.04)!important; border:1px solid rgba(255,255,255,.08)!important; border-radius:12px!important; }
+
+/* ---------- Utility ---------- */
+.muted{ color:var(--muted) }
+.row{ display:flex; gap:var(--gap); flex-wrap:wrap }
+.spacer{ height:10px }
+.fade-in{ animation:fadein var(--dur) var(--bezier) both }
+@keyframes fadein { from {opacity:0; transform:translateY(4px)} to {opacity:1; transform:none} }
 </style>
 """
 st.markdown(PRO_CSS, unsafe_allow_html=True)
@@ -1032,3 +1179,4 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
