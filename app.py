@@ -1,14 +1,13 @@
-# app.py — Bankruptcy Prediction Dashboard (Single File, Robust Price Chart)
+# app.py — Bankruptcy Prediction Dashboard (Single File, Fixed & Polished)
 # Run:
-#   pip install -r requirements.txt
+#   pip install --upgrade pip
+#   pip install streamlit yfinance scikit-learn plotly xgboost
 #   streamlit run app.py
 
-# -------------------------------
-# BOOTSTRAP
-# -------------------------------
-import re
-import time
-import math
+# ===============================
+# 0) Imports
+# ===============================
+import re, time, math
 from datetime import datetime, timedelta
 from io import StringIO
 
@@ -16,14 +15,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Set page config FIRST (Streamlit requirement)
-st.set_page_config(
-    page_title="Bankruptcy Prediction Dashboard",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# 3rd party libs
+# 3rd-party (optional) ---------------------------------
 try:
     import yfinance as yf
 except Exception:
@@ -34,71 +26,69 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
-    confusion_matrix
+    accuracy_score, precision_score, recall_score,
+    f1_score, roc_auc_score, confusion_matrix
 )
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# Optional XGBoost
 try:
     import xgboost as xgb
     XGBOOST_AVAILABLE = True
 except Exception:
     XGBOOST_AVAILABLE = False
 
-# -------------------------------
-# THEME / CSS
-# -------------------------------
+# ===============================
+# 1) Streamlit page config & theme
+# ===============================
+st.set_page_config(
+    page_title="Bankruptcy Prediction Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 PRO_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 :root{
-  --primary-bg:#0a0e27; --secondary-bg:#141b3d; --card-bg:rgba(20,27,61,.85);
-  --card-border:rgba(99,102,241,.2); --text:#f8fafc; --muted:#94a3b8;
+  --bg1:#0a0e27; --bg2:#141b3d; --card:rgba(20,27,61,.88);
+  --border:rgba(99,102,241,.25); --text:#e5e7eb; --muted:#9ca3af;
+  --accent:#7c3aed; --accent2:#6366f1; --good:#10b981; --warn:#f59e0b; --bad:#ef4444;
 }
 *{font-family:'Inter',sans-serif}
 html,body,[data-testid="stAppViewContainer"]{
-  background:linear-gradient(135deg,var(--primary-bg),var(--secondary-bg));
-  background-attachment:fixed
+  background: radial-gradient(1200px 800px at 10% -10%, rgba(125,76,219,.18), transparent),
+              linear-gradient(135deg,var(--bg1),var(--bg2));
+  background-attachment: fixed;
 }
-.card{background:var(--card-bg);border:1px solid var(--card-border);border-radius:14px;padding:14px}
-.metric-card{background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(15,23,42,.85));
-  border-radius:12px;padding:10px;text-align:center;border:1px solid rgba(99,102,241,.18)}
-.metric-label{font-size:.75rem;color:var(--muted);text-transform:uppercase}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px}
+.metric-card{background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(15,23,42,.85));border:1px solid rgba(99,102,241,.18);
+             border-radius:12px;padding:12px 12px;text-align:center}
+.metric-label{font-size:.78rem;color:var(--muted);text-transform:uppercase}
 .metric-value{font-size:1.6rem;font-weight:700;color:var(--text)}
-.small{font-size:.85rem;color:var(--muted)}
-.badge{display:inline-block;padding:6px 10px;border-radius:8px;color:#fff;font-weight:600}
-.badge.safe{background:#10b981}.badge.gray{background:#f59e0b}.badge.distress{background:#ef4444}
+.small{font-size:.86rem;color:var(--muted)}
+.badge{display:inline-block;padding:6px 10px;border-radius:8px;color:#fff;font-weight:700}
+.badge.safe{background:var(--good)} .badge.gray{background:var(--warn)} .badge.distress{background:var(--bad)}
 .progress-container{height:12px;background:rgba(255,255,255,.06);border-radius:8px;overflow:hidden}
-.progress-bar.safe{background:#10b981;height:100%}
-.progress-bar.warning{background:#f59e0b;height:100%}
-.progress-bar.danger{background:#ef4444;height:100%}
+.progress-bar.safe{background:var(--good);height:100%}
+.progress-bar.warning{background:var(--warn);height:100%}
+.progress-bar.danger{background:var(--bad);height:100%}
 </style>
 """
 st.markdown(PRO_CSS, unsafe_allow_html=True)
 
-# -------------------------------
-# SESSION INIT
-# -------------------------------
-if "industry" not in st.session_state:
-    st.session_state.industry = {}
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-# -------------------------------
-# UTILITIES
-# -------------------------------
+# ===============================
+# 2) Utilities
+# ===============================
 def normalize_tickers(raw: str):
-    if not raw:
-        return []
+    if not raw: return []
     parts = [p.strip() for p in raw.split(",") if p.strip()]
-    out = []
+    out=[]
     for p in parts:
         t = re.sub(r"[^A-Za-z0-9\.\-]", "", p)
         if "." in t:
-            a, b = t.split(".", 1); t = a.upper()+"."+b.upper()
+            a,b = t.split(".",1); t = a.upper()+"."+b.upper()
         else:
             t = t.upper()
         out.append(t)
@@ -106,45 +96,37 @@ def normalize_tickers(raw: str):
 
 def fmt_curr(v):
     try:
-        if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
-            return "-"
+        if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))): return "-"
         v = float(v)
-        if abs(v) >= 1e12: return f"${v/1e12:.2f}T"
-        if abs(v) >= 1e9:  return f"${v/1e9:.2f}B"
-        if abs(v) >= 1e6:  return f"${v/1e6:.2f}M"
-        if abs(v) >= 1e3:  return f"${v/1e3:.2f}K"
+        if abs(v)>=1e12: return f"${v/1e12:.2f}T"
+        if abs(v)>=1e9:  return f"${v/1e9:.2f}B"
+        if abs(v)>=1e6:  return f"${v/1e6:.2f}M"
+        if abs(v)>=1e3:  return f"${v/1e3:.2f}K"
         return f"${v:.2f}"
-    except:
-        return str(v)
+    except: return str(v)
 
 def _safe_den(v, floor=1.0):
-    try:
-        x = float(v); return max(abs(x), floor)
-    except:
-        return floor
+    try: x=float(v); return max(abs(x), floor)
+    except: return floor
 
 def _first_col(df: pd.DataFrame) -> pd.Series:
     try:
-        if df is None or df.empty:
-            return pd.Series(dtype=float)
-        return df.iloc[:, 0]
+        if df is None or df.empty: return pd.Series(dtype=float)
+        return df.iloc[:,0]
     except:
         return pd.Series(dtype=float)
 
 def _get_with_candidates(s: pd.Series, names) -> float:
-    if s is None or len(s) == 0:
-        return 0.0
+    if s is None or len(s)==0: return 0.0
     for nm in names:
         if nm in s.index and pd.notna(s.loc[nm]):
-            try:
-                return float(s.loc[nm])
-            except:
-                pass
+            try: return float(s.loc[nm])
+            except: pass
     return 0.0
 
-# -------------------------------
-# CSV HELPERS
-# -------------------------------
+# ===============================
+# 3) CSV helpers
+# ===============================
 def _csv_from_result(tk, base, ratios, z, zprob, ml, comb):
     out = StringIO()
     out.write("BANKRUPTCY ANALYSIS REPORT\n")
@@ -166,23 +148,21 @@ def _csv_from_result(tk, base, ratios, z, zprob, ml, comb):
     out.write(f"Status,{comb['status']}\n")
     out.write(f"Model Agreement,{comb['model_agreement']}\n\n")
     out.write("FINANCIAL RATIOS\n")
-    rfmt = {k: (round(v, 4) if abs(v) < 100 else round(v, 2)) for k, v in ratios.items()}
-    for k, v in rfmt.items():
+    rfmt = {k:(round(v,4) if abs(v)<100 else round(v,2)) for k,v in ratios.items()}
+    for k,v in rfmt.items():
         out.write(f"{k},{v}\n")
     return out.getvalue().encode("utf-8")
 
 def _csv_from_history_last():
     last = st.session_state.history[-1]
     base = {"company_name": last["company_name"], "sector": last["sector"]}
-    return _csv_from_result(
-        last["ticker"], base, last["ratios"],
-        last["altman"]["score"], last["altman"]["prob"],
-        last["ml"], last["combined"]
-    )
+    return _csv_from_result(last["ticker"], base, last["ratios"],
+                            last["altman"]["score"], last["altman"]["prob"],
+                            last["ml"], last["combined"])
 
-# -------------------------------
-# YFINANCE FETCHERS (ROBUST)
-# -------------------------------
+# ===============================
+# 4) Yahoo fetchers (robust)
+# ===============================
 def _first_nonempty_df(obj, attr_names):
     for nm in attr_names:
         try:
@@ -197,33 +177,31 @@ def _first_nonempty_df(obj, attr_names):
 def fetch_yahoo_financials(ticker: str, prefer: str = "auto", retries: int = 2, pause: float = 0.8):
     if yf is None:
         raise RuntimeError("yfinance is not installed. Add it to requirements.txt and redeploy.")
-
     tkr = yf.Ticker(ticker)
     last_err = None
-    for _ in range(retries + 1):
+    for _ in range(retries+1):
         try:
             try:
                 info = tkr.info or {}
             except Exception:
                 info = {}
-
-            inc_annual = _first_nonempty_df(tkr, ["income_stmt", "financials"])
+            inc_annual = _first_nonempty_df(tkr, ["income_stmt","financials"])
             bs_annual  = _first_nonempty_df(tkr, ["balance_sheet"])
             cf_annual  = _first_nonempty_df(tkr, ["cashflow"])
-            inc_quarter = _first_nonempty_df(tkr, ["quarterly_income_stmt", "quarterly_financials"])
+            inc_quarter = _first_nonempty_df(tkr, ["quarterly_income_stmt","quarterly_financials"])
             bs_quarter  = _first_nonempty_df(tkr, ["quarterly_balance_sheet"])
             cf_quarter  = _first_nonempty_df(tkr, ["quarterly_cashflow"])
 
-            if prefer == "annual":
+            if prefer=="annual":
                 inc_df = inc_annual if not inc_annual.empty else inc_quarter
                 bs_df  = bs_annual  if not bs_annual.empty  else bs_quarter
                 cf_df  = cf_annual  if not cf_annual.empty  else cf_quarter
-            elif prefer == "quarterly":
+            elif prefer=="quarterly":
                 inc_df = inc_quarter if not inc_quarter.empty else inc_annual
                 bs_df  = bs_quarter  if not bs_quarter.empty  else bs_annual
                 cf_df  = cf_quarter  if not cf_quarter.empty  else cf_annual
             else:
-                def pick_first(a, q): return a if (isinstance(a, pd.DataFrame) and not a.empty) else q
+                def pick_first(a,q): return a if (isinstance(a,pd.DataFrame) and not a.empty) else q
                 inc_df = pick_first(inc_annual, inc_quarter)
                 bs_df  = pick_first(bs_annual,  bs_quarter)
                 cf_df  = pick_first(cf_annual,  cf_quarter)
@@ -231,118 +209,108 @@ def fetch_yahoo_financials(ticker: str, prefer: str = "auto", retries: int = 2, 
             if (inc_df is None or inc_df.empty) and (bs_df is None or bs_df.empty):
                 raise ValueError("No financial statements available from Yahoo for this ticker.")
 
-            return {
-                "info": info,
-                "bs": _first_col(bs_df),
-                "inc": _first_col(inc_df),
-                "cf": _first_col(cf_df)
-            }
+            return {"info": info, "bs": _first_col(bs_df), "inc": _first_col(inc_df), "cf": _first_col(cf_df)}
         except Exception as e:
             last_err = e
             time.sleep(pause)
     raise RuntimeError(f"Yahoo Finance fetch failed for {ticker}: {last_err}")
 
-def _normalize_price_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure Date column, numeric columns, sorted ascending."""
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    df = df.reset_index()
-    # Normalize date column name
-    if "Date" not in df.columns:
-        # Some versions return first column named something else
-        df = df.rename(columns={df.columns[0]: "Date"})
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    if "Date" in df and hasattr(df["Date"], "dt") and df["Date"].dt.tz is not None:
-        df["Date"] = df["Date"].dt.tz_localize(None)
-
-    # Ensure numeric columns are numeric
-    for col in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df = df[df["Date"].notna()].sort_values("Date").reset_index(drop=True)
-    return df
-
-@st.cache_data(show_spinner=False, ttl=60*15)
-def fetch_price_history(ticker: str, years: int = 5, retries: int = 4, pause: float = 0.8) -> pd.DataFrame:
+@st.cache_data(show_spinner=False, ttl=60*10)
+def fetch_price_history(ticker: str, years: int = 5, retries: int = 3, pause: float = 0.7) -> pd.DataFrame:
     """
-    Robust price fetch with multiple fallbacks to handle edge tickers and environments.
+    FIXED: Robust price fetch with multiple fallbacks
+    Fallback order:
+      1) yf.download(period=...) with auto_adjust
+      2) Ticker.history(period=...)
+      3) Ticker.history(start=..., end=...) with explicit dates
     """
     if yf is None:
         return pd.DataFrame()
 
     last_err = None
-    end_dt = datetime.utcnow()
-    start_dt = end_dt - timedelta(days=365*max(1, int(years)))
+    start_dt = datetime.utcnow() - timedelta(days=int(365.25*years) + 7)
+    end_dt   = datetime.utcnow()
 
     for attempt in range(retries):
         try:
-            # 1) yf.download with auto_adjust (fast path)
+            # --- Method 1 ---
             df = yf.download(
-                tickers=ticker,
-                period=f"{years}y",
-                interval="1d",
-                auto_adjust=True,
-                progress=False,
-                threads=False
+                ticker, period=f"{years}y", auto_adjust=True,
+                progress=False, ignore_tz=True
             )
+
             if isinstance(df, pd.DataFrame) and not df.empty:
-                df = _normalize_price_df(df)
-                # Prefer Close; fallback to Adj Close only if Close is all-NA
-                price_ok = ("Close" in df.columns and df["Close"].notna().any()) or \
-                           ("Adj Close" in df.columns and df["Adj Close"].notna().any())
-                if price_ok:
+                df = df.reset_index()
+                if "Date" not in df.columns and "Datetime" in df.columns:
+                    df.rename(columns={"Datetime":"Date"}, inplace=True)
+                elif "Date" not in df.columns:
+                    df.rename(columns={df.columns[0]:"Date"}, inplace=True)
+
+                df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+                if getattr(df["Date"].dt, "tz", None) is not None:
+                    df["Date"] = df["Date"].dt.tz_localize(None)
+                df = df[df["Date"].notna()].sort_values("Date").reset_index(drop=True)
+
+                # numeric columns
+                for col in ["Open","High","Low","Close","Adj Close","Volume"]:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+                # If there's any close-like data, return
+                if ("Close" in df.columns and df["Close"].notna().any()) or \
+                   ("Adj Close" in df.columns and df["Adj Close"].notna().any()):
                     return df
 
-            # 2) yf.download WITHOUT auto_adjust (some tickers behave differently)
-            df = yf.download(
-                tickers=ticker,
-                period=f"{years}y",
-                interval="1d",
-                auto_adjust=False,
-                progress=False,
-                threads=False
-            )
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df = _normalize_price_df(df)
-                price_ok = ("Close" in df.columns and df["Close"].notna().any()) or \
-                           ("Adj Close" in df.columns and df["Adj Close"].notna().any())
-                if price_ok:
-                    return df
-
-            # 3) Ticker.history with period
+            # --- Method 2 ---
             tkr = yf.Ticker(ticker)
-            df = tkr.history(period=f"{years}y", interval="1d", auto_adjust=False)
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df = _normalize_price_df(df)
-                price_ok = ("Close" in df.columns and df["Close"].notna().any()) or \
-                           ("Adj Close" in df.columns and df["Adj Close"].notna().any())
-                if price_ok:
-                    return df
+            df2 = tkr.history(period=f"{years}y", auto_adjust=True)
+            if isinstance(df2, pd.DataFrame) and not df2.empty:
+                df2 = df2.reset_index()
+                if "Date" not in df2.columns:
+                    df2.rename(columns={df2.columns[0]:"Date"}, inplace=True)
+                df2["Date"] = pd.to_datetime(df2["Date"], errors="coerce")
+                if getattr(df2["Date"].dt, "tz", None) is not None:
+                    df2["Date"] = df2["Date"].dt.tz_localize(None)
+                for col in ["Open","High","Low","Close","Adj Close","Volume"]:
+                    if col in df2.columns:
+                        df2[col] = pd.to_numeric(df2[col], errors="coerce")
+                df2 = df2[df2["Date"].notna()].sort_values("Date").reset_index(drop=True)
+                if ("Close" in df2.columns and df2["Close"].notna().any()) or \
+                   ("Adj Close" in df2.columns and df2["Adj Close"].notna().any()):
+                    return df2
 
-            # 4) Ticker.history with start/end (explicit dates)
-            df = tkr.history(start=start_dt, end=end_dt, interval="1d", auto_adjust=False)
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df = _normalize_price_df(df)
-                price_ok = ("Close" in df.columns and df["Close"].notna().any()) or \
-                           ("Adj Close" in df.columns and df["Adj Close"].notna().any())
-                if price_ok:
-                    return df
+            # --- Method 3 (explicit dates) ---
+            df3 = tkr.history(
+                start=start_dt.strftime("%Y-%m-%d"),
+                end=end_dt.strftime("%Y-%m-%d"),
+                auto_adjust=True
+            )
+            if isinstance(df3, pd.DataFrame) and not df3.empty:
+                df3 = df3.reset_index().rename(columns={df3.columns[0]:"Date"})
+                df3["Date"] = pd.to_datetime(df3["Date"], errors="coerce")
+                if getattr(df3["Date"].dt, "tz", None) is not None:
+                    df3["Date"] = df3["Date"].dt.tz_localize(None)
+                for col in ["Open","High","Low","Close","Adj Close","Volume"]:
+                    if col in df3.columns:
+                        df3[col] = pd.to_numeric(df3[col], errors="coerce")
+                df3 = df3[df3["Date"].notna()].sort_values("Date").reset_index(drop=True)
+                if ("Close" in df3.columns and df3["Close"].notna().any()) or \
+                   ("Adj Close" in df3.columns and df3["Adj Close"].notna().any()):
+                    return df3
 
-            raise ValueError("All price fetch methods returned empty data.")
+            raise ValueError("All fetch methods returned empty data")
 
         except Exception as e:
             last_err = e
-            if attempt < retries - 1:
+            if attempt < retries-1:
                 time.sleep(pause)
 
-    # No data found – return empty
+    # Return empty DataFrame on failure
     return pd.DataFrame()
 
-# -------------------------------
-# DATA / RATIOS / MODELS
-# -------------------------------
+# ===============================
+# 5) Data & ratios
+# ===============================
 def collect_financial_data(ticker: str, prefer="auto") -> dict:
     raw = fetch_yahoo_financials(ticker, prefer=prefer)
     info, bs, inc, cf = raw["info"], raw["bs"], raw["inc"], raw["cf"]
@@ -387,12 +355,12 @@ def collect_financial_data(ticker: str, prefer="auto") -> dict:
     }
 
 def compute_ratios(d: dict) -> dict:
-    TA = _safe_den(d.get("total_assets", 0.0))
-    CL = _safe_den(d.get("current_liabilities", 0.0))
-    TE = _safe_den(d.get("stockholders_equity", 0.0))
-    TL = _safe_den(d.get("total_liabilities", 0.0))
-    TR = _safe_den(d.get("total_revenue", 0.0))
-    WC = (d.get("current_assets", 0.0) or 0.0) - (d.get("current_liabilities", 0.0) or 0.0)
+    TA = _safe_den(d.get("total_assets",0.0))
+    CL = _safe_den(d.get("current_liabilities",0.0))
+    TE = _safe_den(d.get("stockholders_equity",0.0))
+    TL = _safe_den(d.get("total_liabilities",0.0))
+    TR = _safe_den(d.get("total_revenue",0.0))
+    WC = (d.get("current_assets",0.0) or 0.0) - (d.get("current_liabilities",0.0) or 0.0)
 
     return {
         "working_capital_to_assets": WC/TA,
@@ -433,29 +401,24 @@ def altman_z(r: dict):
     x4 = 0.6*r["market_cap_to_liabilities"]
     x5 = 1.0*r["sales_to_assets"]
     z = x1+x2+x3+x4+x5
-    components = {
-        "X1 Working Capital": round(x1,3),
-        "X2 Retained Earnings": round(x2,3),
-        "X3 EBIT": round(x3,3),
-        "X4 Market Value": round(x4,3),
-        "X5 Sales": round(x5,3)
-    }
+    components = {"X1 Working Capital":round(x1,3),"X2 Retained Earnings":round(x2,3),
+                  "X3 EBIT":round(x3,3),"X4 Market Value":round(x4,3),"X5 Sales":round(x5,3)}
     return float(z), components
 
 def z_classify(z):
-    if z > 2.99: return "Safe", "Low", 0
-    if z >= 1.81: return "Gray Zone", "Medium", 1
-    return "Distress", "High", 2
+    if z>2.99: return "Safe","Low",0
+    if z>=1.81: return "Gray Zone","Medium",1
+    return "Distress","High",2
 
 def z_probability(z):
-    if z > 2.99:
-        p = max(1, min(15, 100-(z*20)))
-    elif z >= 1.81:
-        p = 20 + ((2.99 - z)/1.18 * 40)
-    else:
-        p = 60 + ((1.81 - max(z, 0)) * 20)
-    return round(min(99, max(1, p)), 2)
+    if z>2.99: p = max(1, min(15, 100-(z*20)))
+    elif z>=1.81: p = 20+((2.99-z)/1.18*40)
+    else: p = 60+((1.81-max(z,0))*20)
+    return round(min(99,max(1,p)),2)
 
+# ===============================
+# 6) ML (synthetic training)
+# ===============================
 FEATURES = [
  "working_capital_to_assets","retained_earnings_to_assets","ebit_to_assets","market_cap_to_liabilities","sales_to_assets",
  "current_ratio","debt_to_equity","return_on_assets","profit_margin","asset_turnover","interest_coverage",
@@ -484,8 +447,7 @@ def build_models():
     rf=RandomForestClassifier(n_estimators=180,max_depth=10,random_state=42); rf.fit(Xtr_s,ytr); models["random_forest"]=rf
     gb=GradientBoostingClassifier(n_estimators=160,random_state=42); gb.fit(Xtr_s,ytr); models["gradient_boosting"]=gb
     if XGBOOST_AVAILABLE:
-        xg=xgb.XGBClassifier(n_estimators=200,max_depth=5,learning_rate=0.07,subsample=0.9,
-                             colsample_bytree=0.9,random_state=42,eval_metric="logloss")
+        xg=xgb.XGBClassifier(n_estimators=200,max_depth=5,learning_rate=0.07,subsample=0.9,colsample_bytree=0.9,random_state=42,eval_metric="logloss")
         xg.fit(Xtr_s,ytr); models["xgboost"]=xg
 
     metrics={}
@@ -501,8 +463,7 @@ def build_models():
         }
     return {"scaler":scaler,"models":models,"metrics":metrics}
 
-def features_from_ratios(r): 
-    return np.array([r.get(k,0.0) for k in FEATURES], dtype=float).reshape(1,-1)
+def features_from_ratios(r): return np.array([r.get(k,0.0) for k in FEATURES], dtype=float).reshape(1,-1)
 
 def predict_all(r):
     pack=build_models(); scaler,models=pack["scaler"],pack["models"]
@@ -510,8 +471,7 @@ def predict_all(r):
     preds={}; votes=[]; probs=[]
     for name,m in models.items():
         p=int(m.predict(Xs)[0]); pr=m.predict_proba(Xs)[0,1]
-        preds[name]={"prediction":p,"probability_bankrupt":round(pr*100,2),
-                     "probability_safe":round((1-pr)*100,2),
+        preds[name]={"prediction":p,"probability_bankrupt":round(pr*100,2),"probability_safe":round((1-pr)*100,2),
                      "risk_label":"High Risk" if p==1 else "Low Risk"}
         votes.append(p); probs.append(pr*100)
     avg=float(np.mean(probs)) if probs else 0.0
@@ -519,127 +479,68 @@ def predict_all(r):
     return {"ensemble_prediction":"High Risk" if maj==1 else "Low Risk",
             "probability_bankrupt":round(avg,2),"probability_safe":round(100-avg,2),
             "confidence":round(max(avg,100-avg),2),"individual_models":preds,
-            "rf_features": models["random_forest"].feature_importances_.tolist()
-                             if "random_forest" in models else None}
+            "rf_features": pack["models"]["random_forest"].feature_importances_.tolist() if "random_forest" in pack["models"] else None}
 
 def combined_assessment(z, ml):
     zp=z_probability(z); mp=ml["probability_bankrupt"]; comb=(0.6*mp)+(0.4*zp)
-    if comb<20:
-        risk,status=("Low","Safe"); rec="Strong financial health. Both traditional and ML models indicate low bankruptcy risk."
-    elif comb<50:
-        risk,status=("Medium","Gray Zone"); rec="Moderate risk detected. Monitor metrics and consider risk management strategies."
-    else:
-        risk,status=("High","Distress"); rec="High bankruptcy risk. Indicators point to distress. Immediate attention required."
+    if comb<20:  risk,status=("Low","Safe"); rec="Strong financial health. Both traditional and ML models indicate low bankruptcy risk."
+    elif comb<50: risk,status=("Medium","Gray Zone"); rec="Moderate risk detected. Monitor metrics and consider risk management strategies."
+    else:        risk,status=("High","Distress"); rec="High bankruptcy risk. Indicators point to distress. Immediate attention required."
     return {"combined_probability":round(comb,2),"risk_level":risk,"status":status,"recommendation":rec,
             "model_agreement":abs(zp-mp)<20}
 
-def record_industry(sector, tk, z, mlp):
-    sector = sector or "Unknown"
-    st.session_state.industry.setdefault(sector, [])
-    st.session_state.industry[sector].append({
-        "ticker": tk, "z": float(z), "ml": float(mlp),
-        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
-
-def sector_stats(sector):
-    rows = st.session_state.industry.get(sector, [])
-    if not rows: return None
-    z=[r["z"] for r in rows]
-    return {"n":len(rows),
-            "z_mean":round(float(np.mean(z)),2),
-            "z_med":round(float(np.median(z)),2),
-            "z_std":round(float(np.std(z)),2),
-            "z_min":round(float(np.min(z)),2),
-            "z_max":round(float(np.max(z)),2),
-            "risk_dist":{"safe":int(sum(1 for x in z if x>2.99)),
-                         "gray":int(sum(1 for x in z if 1.81<=x<=2.99)),
-                         "distress":int(sum(1 for x in z if x<1.81))},
-            "rows":rows}
-
-# -------------------------------
-# CHARTS
-# -------------------------------
+# ===============================
+# 7) Charts
+# ===============================
 def chart_price(df: pd.DataFrame, ticker: str):
-    """Price chart with robust handling for OHLC/AdjClose/Volume."""
-    if df is None or df.empty:
-        return None
+    if df is None or df.empty: return None
     try:
-        if "Date" not in df.columns:
-            return None
-
+        if "Date" not in df.columns: return None
         df = df.copy()
         df = df[df["Date"].notna()].sort_values("Date").reset_index(drop=True)
-        if df.empty:
-            return None
+        if df.empty: return None
 
-        have_ohlc = all(c in df.columns for c in ["Open","High","Low","Close"]) \
-                    and df[["Open","High","Low","Close"]].notna().any().any()
+        have_ohlc = all(c in df.columns for c in ["Open","High","Low","Close"])
 
-        fig = make_subplots(rows=2, cols=1, row_heights=[0.7, 0.3], vertical_spacing=0.05,
-                            subplot_titles=(f"{ticker} Stock Price", "Volume"))
+        fig = make_subplots(rows=2, cols=1, row_heights=[0.7,0.3], vertical_spacing=0.05,
+                            subplot_titles=(f"{ticker} Stock Price","Volume"))
 
         if have_ohlc:
             valid_ohlc = df.dropna(subset=["Open","High","Low","Close"])
             if not valid_ohlc.empty:
                 fig.add_trace(go.Candlestick(
-                    x=valid_ohlc["Date"],
-                    open=valid_ohlc["Open"],
-                    high=valid_ohlc["High"],
-                    low=valid_ohlc["Low"],
-                    close=valid_ohlc["Close"],
-                    name="Price",
-                    increasing_line_color="#10b981",
-                    decreasing_line_color="#ef4444"
-                ), row=1, col=1)
+                    x=valid_ohlc["Date"], open=valid_ohlc["Open"], high=valid_ohlc["High"],
+                    low=valid_ohlc["Low"], close=valid_ohlc["Close"],
+                    name="Price", increasing_line_color="#10b981",
+                    decreasing_line_color="#ef4444"), row=1, col=1)
             else:
                 have_ohlc = False
 
         if not have_ohlc:
-            price_col = "Close" if ("Close" in df.columns and df["Close"].notna().any()) else \
-                        ("Adj Close" if "Adj Close" in df.columns else None)
-            if price_col is None:
-                return None
+            price_col = "Close" if "Close" in df.columns else ("Adj Close" if "Adj Close" in df.columns else None)
+            if price_col is None: return None
             valid_price = df.dropna(subset=[price_col])
-            if valid_price.empty:
-                return None
+            if valid_price.empty: return None
             fig.add_trace(go.Scatter(
-                x=valid_price["Date"],
-                y=valid_price[price_col],
-                mode="lines",
-                name=price_col,
-                line=dict(color="#6366f1", width=2),
-                fill="tozeroy",
-                fillcolor="rgba(99,102,241,0.1)"
-            ), row=1, col=1)
+                x=valid_price["Date"], y=valid_price[price_col], mode="lines",
+                name=price_col, line=dict(color="#6366f1", width=2),
+                fill="tozeroy", fillcolor="rgba(99,102,241,0.12)"), row=1, col=1)
 
         if "Volume" in df.columns and df["Volume"].notna().any():
-            valid_vol = df[df["Volume"].notna()].copy()
-            if not valid_vol.empty:
-                if have_ohlc:
-                    colors=[]
-                    for _, row in valid_vol.iterrows():
-                        if pd.notna(row.get("Close")) and pd.notna(row.get("Open")):
-                            colors.append("#10b981" if row["Close"] >= row["Open"] else "#ef4444")
-                        else:
-                            colors.append("#6366f1")
-                else:
-                    colors = ["#6366f1"]*len(valid_vol)
-
-                fig.add_trace(go.Bar(
-                    x=valid_vol["Date"],
-                    y=valid_vol["Volume"],
-                    name="Volume",
-                    marker_color=colors,
-                    opacity=0.5
-                ), row=2, col=1)
+            vol = df[df["Volume"].notna()].copy()
+            if have_ohlc:
+                colors = np.where(vol["Close"].fillna(0).values >= vol["Open"].fillna(0).values,
+                                  "#10b981", "#ef4444").tolist()
+            else:
+                colors = ["#6366f1"]*len(vol)
+            fig.add_trace(go.Bar(x=vol["Date"], y=vol["Volume"], name="Volume",
+                                 marker_color=colors, opacity=0.5), row=2, col=1)
 
         fig.update_layout(
-            template="plotly_dark",
-            height=520,
-            margin=dict(l=20, r=20, t=60, b=20),
+            template="plotly_dark", height=520,
+            margin=dict(l=20,r=20,t=60,b=20),
             xaxis_rangeslider_visible=False,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             font=dict(color="#cbd5e1"),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
@@ -647,7 +548,7 @@ def chart_price(df: pd.DataFrame, ticker: str):
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
         return fig
     except Exception as e:
-        st.error(f"Chart error: {str(e)}")
+        st.error(f"Chart error: {e}")
         return None
 
 def chart_z_components(components: dict):
@@ -668,9 +569,9 @@ def chart_ratio_radar(r: dict):
     vals = [float(r.get(k,0) or 0) for k in keys]
     clipped=[]
     for k,v in zip(keys,vals):
-        if k in ("debt_to_equity","interest_coverage"): clipped.append(min(v,10.0))
+        if k in ("debt_to_equity","interest_coverage"): clipped.append(min(max(v,0),10.0))
         elif k in ("profit_margin","operating_margin"): clipped.append(min(max(v,-50),50))
-        else: clipped.append(min(v,5.0))
+        else: clipped.append(min(max(v,0),5.0))
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(r=clipped, theta=labels, fill="toself", name="Ratios",
                                   line=dict(color="#6366f1", width=2), fillcolor="rgba(99,102,241,0.3)"))
@@ -697,8 +598,7 @@ def chart_model_probs(ml: dict):
     return fig
 
 def chart_rf_importance(importances):
-    if not importances:
-        return None
+    if not importances: return None
     df = pd.DataFrame({"Feature":[f.replace("_"," ").title() for f in FEATURES], "Importance":importances}).sort_values("Importance").tail(12)
     colors = ['#6366f1' if i%2==0 else '#8b5cf6' for i in range(len(df))]
     fig = go.Figure([go.Bar(x=df["Importance"], y=df["Feature"], orientation="h", marker_color=colors,
@@ -728,73 +628,85 @@ def chart_z_gauge(z_score: float):
     return fig
 
 def chart_sector_risk(stats: dict):
-    if not stats or "risk_dist" not in stats:
-        return None
+    if not stats or "risk_dist" not in stats: return None
     dist = stats["risk_dist"]
     labels = ["Safe", "Gray Zone", "Distress"]
     values = [dist.get("safe", 0), dist.get("gray", 0), dist.get("distress", 0)]
     colors = ["#10b981", "#f59e0b", "#ef4444"]
-    fig = go.Figure(data=[go.Pie(
-        labels=labels, values=values, hole=0.4, marker_colors=colors,
-        textinfo='label+percent', textposition='outside'
-    )])
-    fig.update_layout(
-        title=f"Risk Distribution ({stats['n']} Companies)",
-        template="plotly_dark",
-        height=400,
-        margin=dict(l=20, r=20, t=60, b=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#cbd5e1"),
-        showlegend=True
-    )
+    fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.4, marker_colors=colors,
+                                 textinfo='label+percent', textposition='outside')])
+    fig.update_layout(title=f"Risk Distribution ({stats['n']} Companies)", template="plotly_dark", height=400,
+                      margin=dict(l=20, r=20, t=60, b=20), paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"), showlegend=True)
     return fig
 
-# -------------------------------
-# UI
-# -------------------------------
-# Sidebar
+# ===============================
+# 8) Session state
+# ===============================
+if "industry" not in st.session_state: st.session_state.industry={}
+if "history" not in st.session_state: st.session_state.history=[]
+
+def record_industry(sector, tk, z, mlp):
+    sector=sector or "Unknown"
+    st.session_state.industry.setdefault(sector,[])
+    st.session_state.industry[sector].append({"ticker":tk,"z":float(z),"ml":float(mlp),
+                                              "ts":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+
+def sector_stats(sector):
+    rows=st.session_state.industry.get(sector,[])
+    if not rows: return None
+    z=[r["z"] for r in rows]
+    return {"n":len(rows),
+            "z_mean":round(float(np.mean(z)),2),
+            "z_med":round(float(np.median(z)),2),
+            "z_std":round(float(np.std(z)),2),
+            "z_min":round(float(np.min(z)),2),
+            "z_max":round(float(np.max(z)),2),
+            "risk_dist":{"safe":int(sum(1 for x in z if x>2.99)),
+                         "gray":int(sum(1 for x in z if 1.81<=x<=2.99)),
+                         "distress":int(sum(1 for x in z if x<1.81))},
+            "rows":rows}
+
+# ===============================
+# 9) UI
+# ===============================
 with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     prefer = st.selectbox("📊 Financials Preference", ["auto","annual","quarterly"], index=0)
     price_years = st.select_slider("📈 Price History (years)", options=[1,2,3,5,10], value=5)
     st.markdown("---")
-    st.markdown("### 📊 Model Info")
+    st.markdown("### 🤖 Model Info")
+
+    # Safely load models (now defined above)
     try:
-        pack = build_models()  # cached
+        pack = build_models()
         st.metric("Active Models", len(pack["models"]))
         st.metric("Training Samples", "1,000")
     except Exception:
         st.warning("Models loading...")
+
     if st.session_state.history:
         st.markdown("---")
         st.metric("Analyses Run", len(st.session_state.history))
-    st.markdown("---")
-    st.markdown(
-        "<div class='small'>Tip: use exchange suffixes for non-US tickers (e.g., RELIANCE.NS, SHOP.TO, VOD.L)</div>",
-        unsafe_allow_html=True
-    )
 
-# Header & Tabs
+    st.markdown("---")
+    st.markdown("<div class='small'>Tip: use exchange suffixes for non-US tickers (e.g., RELIANCE.NS, SHOP.TO, VOD.L)</div>", unsafe_allow_html=True)
+
+# Header
 st.markdown("""
 <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">
-  <div style="font-size:20px;color:#f8fafc;font-weight:700">🏛️ Bankruptcy Prediction Dashboard</div>
+  <div style="font-size:22px;color:#f8fafc;font-weight:800">🏛️ Bankruptcy Prediction Dashboard</div>
   <div style="color:#cbd5e1">Advanced Financial Analysis Using ML & Altman Z-Score</div>
 </div>
 """, unsafe_allow_html=True)
 tabs = st.tabs(["🔍 Analyze","⚖️ Compare","🏢 Industry","🤖 Models","📜 History","📥 Export"])
 
-# ANALYZE
+# ------------ Analyze ------------
 with tabs[0]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### 📊 Enter Stock Ticker")
     col_inp, col_btn = st.columns([4,1])
     with col_inp:
-        user_raw = st.text_input(
-            "Stock Ticker",
-            value="",
-            placeholder="e.g., AAPL, RELIANCE.NS, SHOP.TO",
-            label_visibility="collapsed"
-        )
+        user_raw = st.text_input("Stock Ticker", value="", placeholder="e.g., AAPL, RELIANCE.NS, SHOP.TO", label_visibility="collapsed")
     with col_btn:
         go_btn = st.button("🔍 Analyze", use_container_width=True, type="primary")
 
@@ -826,8 +738,7 @@ with tabs[0]:
                     "company_name": base["company_name"],
                     "sector": base["sector"],
                     "industry": base["industry"],
-                    "altman": {"score": round(z,2), "status": z_status, "risk": z_risk,
-                               "prob": z_prob, "components": zcomp},
+                    "altman": {"score": round(z,2), "status": z_status, "risk": z_risk, "prob": z_prob, "components": zcomp},
                     "ml": ml,
                     "combined": comb,
                     "ratios": {k:(round(v,4) if abs(v)<100 else round(v,2)) for k,v in ratios.items()},
@@ -846,43 +757,24 @@ with tabs[0]:
                         st.markdown(f"## {base['company_name']}")
                         st.markdown(f"**Ticker:** {ticker} &nbsp;&nbsp; **Sector:** {base['sector']}")
                     with right:
-                        csv_bytes = _csv_from_result(
-                            ticker,
-                            {"company_name": base["company_name"], "sector": base["sector"]},
-                            ratios, z, z_prob, ml, comb
-                        )
-                        st.download_button(
-                            "📥 Export",
-                            data=csv_bytes,
-                            file_name=f"{ticker}_analysis.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
+                        csv_bytes = _csv_from_result(ticker, {"company_name": base["company_name"], "sector": base["sector"]},
+                                                    ratios, z, z_prob, ml, comb)
+                        st.download_button("📥 Export", data=csv_bytes, file_name=f"{ticker}_analysis.csv", mime="text/csv", use_container_width=True)
                     m1,m2,m3 = st.columns(3)
                     with m1:
-                        st.markdown(
-                            f"""<div class="metric-card"><div class="metric-label">Market Cap</div>
-                            <div class="metric-value">{fmt_curr(base.get('market_cap',0))}</div></div>""",
-                            unsafe_allow_html=True)
+                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Market Cap</div><div class="metric-value">{fmt_curr(base.get('market_cap',0))}</div></div>""", unsafe_allow_html=True)
                     with m2:
-                        st.markdown(
-                            f"""<div class="metric-card"><div class="metric-label">Stock Price</div>
-                            <div class="metric-value">{fmt_curr(base.get('stock_price',0))}</div></div>""",
-                            unsafe_allow_html=True)
+                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Stock Price</div><div class="metric-value">{fmt_curr(base.get('stock_price',0))}</div></div>""", unsafe_allow_html=True)
                     with m3:
                         ind = base['industry'] if base['industry'] else "—"
-                        st.markdown(
-                            f"""<div class="metric-card"><div class="metric-label">Industry</div>
-                            <div class="metric-value" style="font-size:1.0rem">{ind[:20]}</div></div>""",
-                            unsafe_allow_html=True)
+                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Industry</div><div class="metric-value" style="font-size:1.0rem">{ind[:20]}</div></div>""", unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with c2:
                     st.markdown('<div class="card">', unsafe_allow_html=True)
                     st.markdown("## 🎯 Risk Assessment")
                     badge = "safe" if comb["status"]=="Safe" else ("gray" if comb["status"]=="Gray Zone" else "distress")
-                    st.markdown(f'<div class="badge {badge}" style="margin:12px 0;">{comb["status"]}</div>',
-                                unsafe_allow_html=True)
+                    st.markdown(f'<div class="badge {badge}" style="margin:12px 0;">{comb["status"]}</div>', unsafe_allow_html=True)
                     b1,b2 = st.columns(2)
                     with b1:
                         st.metric("Risk Level", comb["risk_level"])
@@ -891,12 +783,8 @@ with tabs[0]:
                         st.metric("Combined Risk", f"{comb['combined_probability']}%")
                         st.metric("Confidence", f"{ml['confidence']}%")
                     bar = "safe" if comb["combined_probability"]<20 else ("warning" if comb["combined_probability"]<50 else "danger")
-                    st.markdown(
-                        f"""<div class="progress-container" style="margin-top:12px;">
-                        <div class="progress-bar {bar}" style="width:{int(comb['combined_probability'])}%"></div></div>""",
-                        unsafe_allow_html=True)
-                    st.markdown(f"<div class='small' style='margin-top:8px'>{comb['recommendation']}</div>",
-                                unsafe_allow_html=True)
+                    st.markdown(f"""<div class="progress-container" style="margin-top:12px;"><div class="progress-bar {bar}" style="width:{int(comb['combined_probability'])}%"></div></div>""", unsafe_allow_html=True)
+                    st.markdown(f"<div class='small' style='margin-top:8px'>{comb['recommendation']}</div>", unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 st.markdown("---")
@@ -905,9 +793,7 @@ with tabs[0]:
                 with m1:
                     st.markdown('<div class="card">', unsafe_allow_html=True)
                     st.plotly_chart(chart_z_gauge(z), use_container_width=True, config={"displayModeBar": False})
-                    st.markdown(
-                        f"<div class='small'><strong>Status:</strong> {z_status}<br><strong>Risk:</strong> {z_risk}"
-                        f"<br><strong>Probability:</strong> {z_prob}%</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='small'><strong>Status:</strong> {z_status}<br><strong>Risk:</strong> {z_risk}<br><strong>Probability:</strong> {z_prob}%</div>", unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with m2:
@@ -920,9 +806,7 @@ with tabs[0]:
                         else:
                             st.warning("⚠️ Price data available but chart rendering failed.")
                     else:
-                        st.info("📊 Price history not available for this ticker via yfinance in this environment.")
-                        st.markdown("<div class='small'>Tip: try another interval/years or add an exchange suffix (e.g., BRK-B, RDS-A, RELIANCE.NS).</div>",
-                                    unsafe_allow_html=True)
+                        st.info("📊 Price history not available for this ticker via yfinance in this environment.\n\n**Tip:** try another years range or add an exchange suffix (e.g., BRK-B, RDS-A, RELIANCE.NS).")
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 st.markdown("---")
@@ -944,26 +828,20 @@ with tabs[0]:
                     st.markdown('<div class="card">', unsafe_allow_html=True)
                     st.markdown("### 🤖 ML Model Predictions")
                     st.plotly_chart(chart_model_probs(ml), use_container_width=True, config={"displayModeBar": False})
-                    mdl_df = pd.DataFrame([{
-                        "Model":k.replace("_"," ").title(),
-                        "Risk %":f"{v['probability_bankrupt']}%",
-                        "Safe %":f"{v['probability_safe']}%",
-                        "Prediction":v['risk_label']
-                    } for k,v in ml["individual_models"].items()])
+                    mdl_df = pd.DataFrame([{"Model":k.replace("_"," ").title(),"Risk %":v['probability_bankrupt'],"Safe %":v['probability_safe'],"Prediction":v['risk_label']} for k,v in ml["individual_models"].items()])
                     st.dataframe(mdl_df, use_container_width=True, hide_index=True)
                     st.markdown("</div>", unsafe_allow_html=True)
                 with bt2:
                     st.markdown('<div class="card">', unsafe_allow_html=True)
                     if ml.get("rf_features"):
                         fi_fig = chart_rf_importance(ml["rf_features"])
-                        if fi_fig:
-                            st.plotly_chart(fi_fig, use_container_width=True, config={"displayModeBar": False})
+                        if fi_fig: st.plotly_chart(fi_fig, use_container_width=True, config={"displayModeBar": False})
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 st.markdown("---")
 
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.markdown("### 📊 Complete Financial Ratios")
+                st.markdown("### 🧾 Complete Financial Ratios")
                 ratio_categories = {
                     "Altman Z Components":["working_capital_to_assets","retained_earnings_to_assets","ebit_to_assets","market_cap_to_liabilities","sales_to_assets"],
                     "Liquidity Ratios":["current_ratio","quick_ratio","cash_ratio"],
@@ -977,24 +855,21 @@ with tabs[0]:
                     with cols[idx]:
                         st.markdown(f"**{category}**")
                         data=[{"Metric":k.replace("_"," ").title(),"Value":result["ratios"][k]} for k in keys if k in result["ratios"]]
-                        if data:
-                            st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True, height=240)
+                        if data: st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True, height=240)
                 st.markdown("</div>", unsafe_allow_html=True)
 
             except Exception as e:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.error(f"❌ Analysis failed for '{ticker}'")
                 st.exception(e)
-                st.markdown("<div class='small'>Troubleshooting: check ticker spelling, add exchange suffix (.NS, .TO, .L), ensure network and that yfinance is installed.</div>",
-                            unsafe_allow_html=True)
+                st.markdown("<div class='small'>Troubleshooting: check ticker spelling, add exchange suffix (.NS, .TO, .L), ensure network and that yfinance is installed.</div>", unsafe_allow_html=True)
                 st.markdown("</div>", unsafe_allow_html=True)
 
-# COMPARE
+# ------------ Compare ------------
 with tabs[1]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### ⚖️ Compare Multiple Companies")
-    line = st.text_input("Enter tickers (comma separated)", value="AAPL, MSFT, TSLA, GOOGL",
-                         help="Enter up to 12 tickers separated by commas")
+    line = st.text_input("Enter tickers (comma separated)", value="AAPL, MSFT, TSLA, GOOGL", help="Enter up to 12 tickers separated by commas")
     if st.button("🔍 Compare All", type="primary"):
         tks = normalize_tickers(line)[:12]
         with st.spinner(f"🔄 Analyzing {len(tks)} companies..."):
@@ -1011,8 +886,7 @@ with tabs[1]:
                                  "Z-Score":round(z,2),"ML Risk %":ml["probability_bankrupt"],
                                  "Combined %":comb["combined_probability"],"Status":comb["status"],"Risk Level":comb["risk_level"]})
                 except Exception as e:
-                    rows.append({"Ticker":tk,"Company":"Error","Sector":"-","Z-Score":None,"ML Risk %":None,"Combined %":None,
-                                 "Status":f"Failed: {str(e)[:30]}","Risk Level":"-"})
+                    rows.append({"Ticker":tk,"Company":"Error","Sector":"-","Z-Score":None,"ML Risk %":None,"Combined %":None,"Status":f"Failed: {str(e)[:30]}","Risk Level":"-"})
                 progress_bar.progress((i+1)/max(len(tks),1))
             progress_bar.empty()
             if rows:
@@ -1026,12 +900,11 @@ with tabs[1]:
                     fig.update_layout(title="Combined Bankruptcy Risk Comparison", template="plotly_dark", height=450,
                                       margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                       font=dict(color="#cbd5e1"), yaxis_title="Bankruptcy Risk %")
-                    fig.update_xaxes(showgrid=False)
-                    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
+                    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
                     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
 
-# INDUSTRY
+# ------------ Industry ------------
 with tabs[2]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### 🏢 Industry Analysis")
@@ -1046,10 +919,7 @@ with tabs[2]:
                 vals = [stats['n'],stats['z_mean'],stats['z_med'],stats['z_min'],stats['z_max']]
                 for col,label,val in zip([m1,m2,m3,m4,m5],labels,vals):
                     with col:
-                        st.markdown(
-                            f"""<div class="metric-card"><div class="metric-label">{label}</div>
-                            <div class="metric-value">{val}</div></div>""",
-                            unsafe_allow_html=True)
+                        st.markdown(f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{val}</div></div>""", unsafe_allow_html=True)
                 fig_sector = chart_sector_risk(stats)
                 if fig_sector:
                     st.plotly_chart(fig_sector, use_container_width=True, config={"displayModeBar": False})
@@ -1059,7 +929,7 @@ with tabs[2]:
         st.info("📊 No sector data available yet. Run some analyses to populate industry statistics.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# MODELS
+# ------------ Models ------------
 with tabs[3]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### 🤖 Machine Learning Models Performance")
@@ -1085,7 +955,7 @@ with tabs[3]:
     st.markdown("<div class='small'>Training data: 1,000 synthetic samples (≈33% bankrupt). Ensemble: majority vote with probability averaging.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# HISTORY
+# ------------ History ------------
 with tabs[4]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### 📜 Analysis History")
@@ -1116,23 +986,18 @@ with tabs[4]:
         st.info("📊 No analysis history yet. Start by analyzing a company in the Analyze tab.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# EXPORT
+# ------------ Export ------------
 with tabs[5]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### 📥 Export Analysis Results")
     if st.session_state.history:
         last = st.session_state.history[-1]
-        st.markdown(
-            f"<div class='small'><strong>Latest Analysis:</strong><br><strong>Company:</strong> {last['company_name']}<br>"
-            f"<strong>Ticker:</strong> {last['ticker']}<br><strong>Status:</strong> {last['combined']['status']}<br>"
-            f"<strong>Risk:</strong> {last['combined']['combined_probability']}%</div>",
-            unsafe_allow_html=True
-        )
+        st.markdown(f"<div class='small'><strong>Latest Analysis:</strong><br><strong>Company:</strong> {last['company_name']}<br><strong>Ticker:</strong> {last['ticker']}<br><strong>Status:</strong> {last['combined']['status']}<br><strong>Risk:</strong> {last['combined']['combined_probability']}%</div>", unsafe_allow_html=True)
         out = _csv_from_history_last()
         col1,col2 = st.columns(2)
         with col1:
             st.download_button("📥 Download Latest Analysis (CSV)", data=out,
-                               file_name=f"{last['ticker']}_bankruptcy_analysis_{datetime.now().strftime('%Y%m%d')}.csv",
+                               file_name=f\"{last['ticker']}_bankruptcy_analysis_{datetime.now().strftime('%Y%m%d')}.csv\",
                                mime="text/csv", use_container_width=True, type="primary")
         with col2:
             if len(st.session_state.history)>1:
@@ -1148,7 +1013,9 @@ with tabs[5]:
         st.info("📊 No analysis results to export. Run an analysis first.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# FOOTER
+# ===============================
+# Footer
+# ===============================
 st.markdown("""
 <div style="text-align:center;margin-top:24px;padding:16px;border-top:1px solid rgba(99,102,241,.2);color:#94a3b8">
   <p><strong>Powered by:</strong> Altman Z-Score | ML (LR, RF, GB, XGBoost)</p>
