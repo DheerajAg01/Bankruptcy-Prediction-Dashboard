@@ -1,4 +1,4 @@
-# app.py — Bankruptcy Prediction Dashboard (Single File, Fixed & Polished)
+# app.py — Bankruptcy Prediction Dashboard (Single File, Fixed & Polished UI)
 # Run:
 #   pip install --upgrade pip
 #   pip install streamlit yfinance scikit-learn plotly xgboost pandas numpy
@@ -53,181 +53,51 @@ st.set_page_config(
 # -------------------------------
 PRO_CSS = """
 <style>
-/* ---------- Fonts & Tokens ---------- */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 :root{
-  /* Core palette */
-  --bg-0:#070a16;         /* base background */
-  --bg-1:#0b1130;         /* primary surface */
-  --bg-2:rgba(20,27,61,.85); /* glass layer */
-  --card:#0e163a;
-  --card-border:rgba(100,116,255,.18);
-  --elev-1:0 10px 30px rgba(2,8,23,.45), inset 0 1px 0 rgba(255,255,255,.03);
-
-  /* Text */
-  --text:#f7f9ff;
-  --muted:#a8b0d8;
-  --subtle:#93a0c6;
-
-  /* Accents */
-  --accent:#6c73ff;       /* primary indigo */
-  --accent-2:#7ce3ff;     /* cyan pop */
-  --ok:#16c172;           /* green */
-  --warn:#f59e0b;         /* amber */
-  --bad:#ef4444;          /* red */
-
-  /* Radii & spacing */
-  --r-sm:10px; --r-md:14px; --r-lg:18px; --r-xl:22px;
-  --pad:16px; --gap:12px;
-
-  /* Animation */
-  --dur:220ms; --bezier:cubic-bezier(.2,.7,.2,1);
+  --primary-bg:#0b0f2a; --secondary-bg:#12183a; --card-bg:rgba(20,27,61,.88);
+  --card-border:rgba(99,102,241,.25); --text:#f8fafc; --muted:#a3aed0;
+  --accent:#6366f1; --good:#10b981; --warn:#f59e0b; --bad:#ef4444;
 }
-
-*{font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+*{font-family:'Inter',sans-serif}
 html,body,[data-testid="stAppViewContainer"]{
-  background:
-    radial-gradient(1200px 800px at 12% 10%, #132054 0%, #0c1337 38%, #070a16 100%) fixed,
-    linear-gradient(180deg, rgba(16,21,49,.6), rgba(7,10,22,.8)) fixed;
-  color:var(--text);
+  background:radial-gradient(1200px 800px at 15% 10%, #101744 0%, #0b0f2a 35%, #080b1e 100%) fixed;
 }
 
-/* ---------- Global polish ---------- */
-h1,h2,h3 { letter-spacing:.2px; }
-h1{font-weight:800}
-h2{font-weight:700}
-p,li,small,span{ color:var(--muted) }
-a{ color:var(--accent-2); text-decoration:none }
-a:hover{opacity:.9}
+/* tighten base spacing */
+.block-container { padding-top: 1.2rem; padding-bottom: 1.2rem; }
 
-/* Smooth hover scale for cards/buttons */
-.hoverable{transition:transform var(--dur) var(--bezier), box-shadow var(--dur) var(--bezier)}
-.hoverable:hover{ transform:translateY(-2px) }
+/* Tabs spacing */
+[data-baseweb="tab-list"] { gap: 6px; }
 
-/* ---------- Layout helpers ---------- */
-.container{display:grid; gap:var(--gap)}
-.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
-.grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
-.grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}
-@media (max-width:1200px){ .grid-4{grid-template-columns:repeat(2,1fr)} }
-@media (max-width:900px){ .grid-3{grid-template-columns:1fr} .grid-2{grid-template-columns:1fr} }
+/* Cards */
+.card{background:var(--card-bg);border:1px solid var(--card-border);border-radius:16px;padding:16px}
+.card-tight{background:var(--card-bg);border:1px solid var(--card-border);border-radius:14px;padding:12px}
+.metric-card{
+  background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(15,23,42,.85));
+  border-radius:12px;padding:12px;text-align:center;border:1px solid rgba(99,102,241,.18)
+}
+.metric-label{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.metric-value{font-size:1.6rem;font-weight:700;color:var(--text)}
+.small{font-size:.86rem;color:var(--muted)}
+.badge{display:inline-block;padding:6px 10px;border-radius:8px;color:#fff;font-weight:600}
+.badge.safe{background:var(--good)}.badge.gray{background:var(--warn)}.badge.distress{background:var(--bad)}
+.progress-container{height:12px;background:rgba(255,255,255,.06);border-radius:8px;overflow:hidden}
+.progress-bar.safe{background:var(--good);height:100%}.progress-bar.warning{background:var(--warn);height:100%}.progress-bar.danger{background:var(--bad);height:100%}
 
-/* ---------- Cards & Surfaces ---------- */
-.card{
-  background:linear-gradient(180deg, rgba(108,115,255,.08), rgba(12,19,55,.72));
-  border:1px solid var(--card-border);
-  border-radius:var(--r-lg);
-  padding:18px;
-  box-shadow:var(--elev-1);
-  backdrop-filter: blur(8px);
-}
-.card.header{
-  background:linear-gradient(135deg, rgba(124,227,255,.10), rgba(108,115,255,.10));
-  border:1px solid rgba(124,227,255,.20);
-}
+/* Buttons polish */
+button[kind="secondary"] { border:1px solid rgba(99,102,241,.35) !important }
+.stButton>button { border-radius:10px; padding:.55rem .8rem }
 
-/* ---------- Metric tiles ---------- */
-.metric{
-  background:linear-gradient(135deg, rgba(108,115,255,.12), rgba(20,25,55,.65));
-  border:1px solid rgba(108,115,255,.18);
-  border-radius:var(--r-md);
-  padding:14px;
-  text-align:left;
-  box-shadow:var(--elev-1);
-}
-.metric .label{
-  font-size:.78rem; color:var(--subtle); text-transform:uppercase; letter-spacing:.08em
-}
-.metric .value{
-  font-size:1.8rem; font-weight:800; color:var(--text); margin-top:6px
-}
-.metric .delta{ font-size:.9rem; margin-top:4px }
-.delta.up{ color:var(--ok) } .delta.flat{ color:var(--warn) } .delta.down{ color:var(--bad) }
-
-/* ---------- Badges, Chips ---------- */
-.badge{
-  display:inline-flex; align-items:center; gap:6px;
-  padding:6px 10px; border-radius:10px; font-weight:700; color:#fff; font-size:.85rem;
-  background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
-  border:1px solid rgba(255,255,255,.08)
-}
-.badge.safe{ background:linear-gradient(180deg, rgba(22,193,114,.18), rgba(22,193,114,.10)); border-color:rgba(22,193,114,.35) }
-.badge.warn{ background:linear-gradient(180deg, rgba(245,158,11,.18), rgba(245,158,11,.10)); border-color:rgba(245,158,11,.35) }
-.badge.distress{ background:linear-gradient(180deg, rgba(239,68,68,.18), rgba(239,68,68,.10)); border-color:rgba(239,68,68,.35) }
-.chip{
-  display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
-  background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); color:var(--muted)
-}
-
-/* ---------- Progress ---------- */
-.progress{
-  background:rgba(255,255,255,.06); border-radius:999px; height:10px; overflow:hidden; border:1px solid rgba(255,255,255,.08)
-}
-.progress > span{ display:block; height:100%; transition:width var(--dur) var(--bezier) }
-.progress .ok{ background:linear-gradient(90deg, #12c36a, #4ade80) }
-.progress .warn{ background:linear-gradient(90deg, #f59e0b, #fbbf24) }
-.progress .bad{ background:linear-gradient(90deg, #ef4444, #f87171) }
-
-/* ---------- Buttons ---------- */
-.btn{
-  display:inline-flex; align-items:center; gap:10px;
-  padding:10px 14px; border-radius:var(--r-sm); font-weight:700; color:#fff; cursor:pointer;
-  background:linear-gradient(135deg, rgba(108,115,255,.35), rgba(124,227,255,.20));
-  border:1px solid rgba(124,227,255,.35);
-  transition:transform var(--dur) var(--bezier), box-shadow var(--dur) var(--bezier), opacity var(--dur) var(--bezier)
-}
-.btn:hover{ transform:translateY(-1px); opacity:.95 }
-.btn.ghost{ background:rgba(255,255,255,.04); border-color:rgba(255,255,255,.10); color:var(--accent-2) }
-
-/* ---------- Streamlit defaults polish ---------- */
-[data-testid="stHeader"]{
-  background:linear-gradient(90deg, rgba(124,227,255,.06), rgba(108,115,255,.06)) !important;
-  border-bottom:1px solid rgba(124,227,255,.14)
-}
-section[data-testid="stSidebar"]{
-  background:linear-gradient(180deg, rgba(10,15,33,.9), rgba(6,9,21,.95)) !important;
-  border-right:1px solid rgba(108,115,255,.12)
-}
-section[data-testid="stSidebar"] *{ color:var(--text) !important }
-
-/* Inputs */
-.stTextInput, .stNumberInput, .stSelectbox, .stDateInput, .stMultiSelect, .stTextArea {
-  filter: drop-shadow(0 8px 18px rgba(2,8,23,.35));
-}
-.st-emotion-cache-1cypcdb, .st-emotion-cache-1v0mbdj, .st-emotion-cache-1gulkj5{
-  /* defensive selectors for input boxes (Streamlit may change class names) */
-  background:rgba(255,255,255,.03) !important; border:1px solid rgba(255,255,255,.10) !important; border-radius:12px !important;
-}
-
-/* Tabs */
-[data-baseweb="tab-list"]{ border-bottom:1px solid rgba(255,255,255,.10) }
-[data-baseweb="tab"]{ color:var(--muted) }
-[data-baseweb="tab"][aria-selected="true"]{
-  color:var(--text); border-bottom:2px solid var(--accent) !important; background:linear-gradient(180deg, rgba(108,115,255,.10), rgba(108,115,255,.02))
-}
-
-/* DataFrames & Tables (dark) */
-[data-testid="stDataFrame"] { background: transparent !important; }
+/* DataFrame dark styling */
 [data-testid="stDataFrame"] div, [data-testid="stTable"] div { color: var(--text) !important; }
+[data-testid="stDataFrame"] { background: transparent !important; }
 [data-testid="stDataFrame"] [class*="row_heading"], 
-[data-testid="stDataFrame"] [class*="blank"] { background: rgba(14,22,58,.6) !important; }
-[data-testid="stDataFrame"] [class*="column_heading"] { 
-  background: linear-gradient(180deg, rgba(108,115,255,.10), rgba(14,22,58,.65)) !important; 
-  color:var(--text)!important; font-weight:700 !important; border-bottom:1px solid rgba(124,227,255,.12)!important;
-}
-[data-testid="stTable"] td, [data-testid="stTable"] th{
-  border-color: rgba(255,255,255,.08) !important;
-}
+[data-testid="stDataFrame"] [class*="blank"] { background: rgba(15,23,42,.5) !important; }
+[data-testid="stDataFrame"] [class*="column_heading"] { background: rgba(15,23,42,.7) !important; }
 
-/* Code blocks */
-pre, code { background: rgba(255,255,255,.04)!important; border:1px solid rgba(255,255,255,.08)!important; border-radius:12px!important; }
-
-/* ---------- Utility ---------- */
-.muted{ color:var(--muted) }
-.row{ display:flex; gap:var(--gap); flex-wrap:wrap }
-.spacer{ height:10px }
-.fade-in{ animation:fadein var(--dur) var(--bezier) both }
-@keyframes fadein { from {opacity:0; transform:translateY(4px)} to {opacity:1; transform:none} }
+/* Form labels alignment */
+.css-ocqkz7, .stTextInput label, .stSelectbox label { color: var(--muted) !important }
 </style>
 """
 st.markdown(PRO_CSS, unsafe_allow_html=True)
@@ -348,32 +218,27 @@ def fetch_price_history(ticker: str, years: int = 5, retries: int = 3, pause: fl
         return pd.DataFrame()
 
     last_err = None
-    
     for attempt in range(retries):
         try:
-            # Method 1: Direct download with explicit interval (works in more envs)
+            # Method 1: yf.download
             df = yf.download(
                 ticker, period=f"{years}y", interval="1d",
                 auto_adjust=True, progress=False, ignore_tz=True
             )
             if isinstance(df, pd.DataFrame) and not df.empty:
                 df = df.reset_index()
-                # Normalize/rename date column
                 if "Date" not in df.columns and "Datetime" in df.columns:
                     df = df.rename(columns={"Datetime": "Date"})
                 elif "Date" not in df.columns:
                     df = df.rename(columns={df.columns[0]: "Date"})
-                # Parse dates, drop tz
                 df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True)
                 if getattr(df["Date"].dt, "tz", None) is not None:
                     df["Date"] = df["Date"].dt.tz_localize(None)
                 df = df[df["Date"].notna()].copy()
-                # Coerce numerics
                 for col in ["Open","High","Low","Close","Adj Close","Volume"]:
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors="coerce")
                 df = df.sort_values("Date").reset_index(drop=True)
-                # Verify there is any price column populated
                 price_cols = [c for c in ["Close","Adj Close"] if c in df.columns]
                 if price_cols and df[price_cols[0]].notna().any():
                     return df
@@ -401,8 +266,7 @@ def fetch_price_history(ticker: str, years: int = 5, retries: int = 3, pause: fl
             last_err = e
             if attempt < retries - 1:
                 time.sleep(pause)
-    
-    # Failure → empty DataFrame (UI will show a gentle note)
+
     return pd.DataFrame()
 
 # -------------------------------
@@ -646,7 +510,7 @@ def _csv_from_history_last():
 # -------------------------------
 # CHARTS
 # -------------------------------
-def chart_price(df: pd.DataFrame, ticker: str):
+def chart_price(df: pd.DataFrame, ticker: str, mode: str = "auto"):
     if df is None or df.empty:
         return None
     try:
@@ -656,13 +520,16 @@ def chart_price(df: pd.DataFrame, ticker: str):
         if df.empty: return None
 
         have_ohlc = all(c in df.columns for c in ["Open","High","Low","Close"])
+        if mode == "line": have_ohlc = False
+        if mode == "candle" and not all(c in df.columns for c in ["Open","High","Low","Close"]):
+            mode = "line"
 
         fig = make_subplots(
             rows=2, cols=1, row_heights=[0.7,0.3], vertical_spacing=0.05,
             subplot_titles=(f"{ticker} Stock Price","Volume")
         )
 
-        if have_ohlc:
+        if have_ohlc and mode in ("auto","candle"):
             valid = df.dropna(subset=["Open","High","Low","Close"])
             if not valid.empty:
                 fig.add_trace(go.Candlestick(
@@ -691,7 +558,9 @@ def chart_price(df: pd.DataFrame, ticker: str):
             v = df[df["Volume"].notna()].copy()
             if not v.empty:
                 if have_ohlc:
-                    colors = np.where((df.get("Close")>=df.get("Open")).fillna(False), "#10b981","#ef4444")
+                    close = df.get("Close")
+                    open_ = df.get("Open")
+                    colors = np.where((close>=open_).fillna(False), "#10b981","#ef4444")
                     v["col"] = colors
                 else:
                     v["col"] = "#6366f1"
@@ -803,6 +672,38 @@ def chart_sector_risk(stats: dict):
                       font=dict(color="#cbd5e1"), showlegend=True)
     return fig
 
+# -------------------------------
+# INSIGHTS (compact bullets)
+# -------------------------------
+def make_insights(base, ratios, z, z_status, z_prob, ml, comb):
+    bullets = []
+    # 1) Overall status
+    bullets.append(f"**Overall:** {comb['status']} ({comb['combined_probability']}% risk, confidence {ml['confidence']}%).")
+    # 2) Agreement
+    agree = "aligned" if comb["model_agreement"] else "divergent"
+    bullets.append(f"**Models {agree}:** Z-Score implies ~{z_prob}% vs ML ~{ml['probability_bankrupt']}% bankruptcy probability.")
+    # 3) Liquidity stress or strength
+    cr = ratios.get("current_ratio", 0)
+    ic = ratios.get("interest_coverage", 0)
+    if cr < 1:
+        bullets.append("**Liquidity watch:** Current ratio < 1 indicates short-term pressure.")
+    elif cr >= 1.5:
+        bullets.append("**Solid liquidity:** Current ratio ≥ 1.5.")
+    # 4) Leverage
+    dte = ratios.get("debt_to_equity", 0)
+    if dte > 2:
+        bullets.append("**High leverage:** Debt/Equity > 2; monitor refinancing risk.")
+    elif dte < 1:
+        bullets.append("**Conservative leverage:** Debt/Equity < 1.")
+    # 5) Profitability cue
+    pm = ratios.get("profit_margin", 0)
+    if pm < 0:
+        bullets.append("**Negative margin:** Profit margin < 0; profitability drag.")
+    elif pm > 10:
+        bullets.append("**Healthy margin:** Profit margin > 10%.")
+    # limit to 5
+    return bullets[:5]
+
 # =============================================
 # ================== UI =======================
 # =============================================
@@ -810,8 +711,9 @@ def chart_sector_risk(stats: dict):
 # Sidebar (models are ready here)
 with st.sidebar:
     st.markdown("## ⚙️ Configuration")
-    prefer = st.selectbox("📊 Financials Preference", ["auto","annual","quarterly"], index=0)
+    prefer = st.selectbox("📊 Financials Preference", ["auto","annual","quarterly"], index=0, help="Choose whether to prefer annual or quarterly statements.")
     price_years = st.select_slider("📈 Price History (years)", options=[1,2,3,5,10], value=5)
+    price_mode = st.radio("📉 Price Chart Style", options=["auto","candle","line"], horizontal=True, index=0)
 
     st.markdown("---")
     st.markdown("### 📊 Model Info")
@@ -844,13 +746,21 @@ tabs = st.tabs(["🔍 Analyze","⚖️ Compare","🏢 Industry","🤖 Models","�
 with tabs[0]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### 📊 Enter Stock Ticker")
-    col_inp, col_btn = st.columns([4,1])
-    with col_inp:
-        user_raw = st.text_input("Stock Ticker", value="", placeholder="e.g., AAPL, RELIANCE.NS, SHOP.TO", label_visibility="collapsed")
-    with col_btn:
-        go_btn = st.button("🔍 Analyze", use_container_width=True, type="primary")
 
-    st.markdown('<div class="small" style="margin-top:12px;">Quick Select:</div>', unsafe_allow_html=True)
+    # Use a form so Enter submits cleanly
+    with st.form(key="analyze_form", clear_on_submit=False):
+        col_inp, col_btn = st.columns([4,1])
+        with col_inp:
+            user_raw = st.text_input(
+                "Stock Ticker",
+                value="",
+                placeholder="e.g., AAPL, RELIANCE.NS, SHOP.TO",
+                label_visibility="collapsed",
+                help="Enter a single ticker to analyze. Use the Compare tab for multiple tickers."
+            )
+        with col_btn:
+            submitted = st.form_submit_button("🔍 Analyze", use_container_width=True, type="primary")
+    st.markdown('<div class="small" style="margin-top:8px;">Quick Select:</div>', unsafe_allow_html=True)
     qcols = st.columns(8)
     selected_quick=None
     for t, col in zip(["AAPL","MSFT","TSLA","AMZN","META","GOOGL","JPM","BAC"], qcols):
@@ -861,151 +771,170 @@ with tabs[0]:
     ticker = selected_quick if selected_quick else (normalize_tickers(user_raw)[0] if user_raw else None)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    if (go_btn or selected_quick) and ticker:
-        with st.spinner(f"🔄 Analyzing {ticker}..."):
-            try:
-                base = collect_financial_data(ticker, prefer=prefer)
-                ratios = compute_ratios(base)
-                z, zcomp = altman_z(ratios)
-                z_status, z_risk, _ = z_classify(z)
-                z_prob = z_probability(z)
-                ml = predict_all(ratios)
-                comb = combined_assessment(z, ml)
-                record_industry(base["sector"], ticker, z, ml["probability_bankrupt"])
+    if (submitted or selected_quick):
+        if not ticker:
+            st.warning("Please enter a valid ticker.")
+        else:
+            with st.spinner(f"🔄 Analyzing {ticker}..."):
+                try:
+                    base = collect_financial_data(ticker, prefer=prefer)
+                    ratios = compute_ratios(base)
+                    z, zcomp = altman_z(ratios)
+                    z_status, z_risk, _ = z_classify(z)
+                    z_prob = z_probability(z)
+                    ml = predict_all(ratios)
+                    comb = combined_assessment(z, ml)
+                    record_industry(base["sector"], ticker, z, ml["probability_bankrupt"])
 
-                result = {
-                    "ticker": ticker,
-                    "company_name": base["company_name"],
-                    "sector": base["sector"],
-                    "industry": base["industry"],
-                    "altman": {"score": round(z,2), "status": z_status, "risk": z_risk, "prob": z_prob, "components": zcomp},
-                    "ml": ml,
-                    "combined": comb,
-                    "ratios": {k:(round(v,4) if abs(v)<100 else round(v,2)) for k,v in ratios.items()},
-                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                st.session_state.history.append(result)
+                    result = {
+                        "ticker": ticker,
+                        "company_name": base["company_name"],
+                        "sector": base["sector"],
+                        "industry": base["industry"],
+                        "altman": {"score": round(z,2), "status": z_status, "risk": z_risk, "prob": z_prob, "components": zcomp},
+                        "ml": ml,
+                        "combined": comb,
+                        "ratios": {k:(round(v,4) if abs(v)<100 else round(v,2)) for k,v in ratios.items()},
+                        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    st.session_state.history.append(result)
 
-                st.success(f"✅ Successfully analyzed {base['company_name']} ({ticker})")
-                st.markdown("---")
+                    st.success(f"✅ Successfully analyzed {base['company_name']} ({ticker})")
+                    st.markdown("---")
 
-                c1,c2 = st.columns([1.4,1])
-                with c1:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    left,right = st.columns([3,1])
-                    with left:
-                        st.markdown(f"## {base['company_name']}")
-                        st.markdown(f"**Ticker:** {ticker} &nbsp;&nbsp; **Sector:** {base['sector']}")
-                    with right:
-                        csv_bytes = _csv_from_result(ticker, {"company_name": base["company_name"], "sector": base["sector"]},
-                                                    ratios, z, z_prob, ml, comb)
-                        st.download_button("📥 Export", data=csv_bytes, file_name=f"{ticker}_analysis.csv",
-                                           mime="text/csv", use_container_width=True)
-                    m1,m2,m3 = st.columns(3)
+                    # Header block
+                    c1,c2 = st.columns([1.4,1])
+                    with c1:
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        left,right = st.columns([3,1])
+                        with left:
+                            st.markdown(f"## {base['company_name']}")
+                            st.markdown(f"**Ticker:** {ticker} &nbsp;&nbsp; **Sector:** {base['sector']}")
+                        with right:
+                            csv_bytes = _csv_from_result(
+                                ticker,
+                                {"company_name": base["company_name"], "sector": base["sector"]},
+                                ratios, z, z_prob, ml, comb
+                            )
+                            st.download_button("📥 Export", data=csv_bytes,
+                                               file_name=f"{ticker}_analysis.csv",
+                                               mime="text/csv", use_container_width=True)
+                        m1,m2,m3 = st.columns(3)
+                        with m1:
+                            st.markdown(f"""<div class="metric-card"><div class="metric-label">Market Cap</div><div class="metric-value">{fmt_curr(base.get('market_cap',0))}</div></div>""", unsafe_allow_html=True)
+                        with m2:
+                            st.markdown(f"""<div class="metric-card"><div class="metric-label">Stock Price</div><div class="metric-value">{fmt_curr(base.get('stock_price',0))}</div></div>""", unsafe_allow_html=True)
+                        with m3:
+                            ind = base['industry'] if base['industry'] else "—"
+                            st.markdown(f"""<div class="metric-card"><div class="metric-label">Industry</div><div class="metric-value" style="font-size:1.0rem">{ind[:20]}</div></div>""", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    with c2:
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.markdown("## 🎯 Risk Assessment")
+                        badge = "safe" if comb["status"]=="Safe" else ("gray" if comb["status"]=="Gray Zone" else "distress")
+                        st.markdown(f'<div class="badge {badge}" style="margin:12px 0;">{comb["status"]}</div>', unsafe_allow_html=True)
+                        b1,b2 = st.columns(2)
+                        with b1:
+                            st.metric("Risk Level", comb["risk_level"])
+                            st.metric("Agreement", "✓ Yes" if comb["model_agreement"] else "✗ No")
+                        with b2:
+                            st.metric("Combined Risk", f"{comb['combined_probability']}%")
+                            st.metric("Confidence", f"{ml['confidence']}%")
+                        bar = "safe" if comb["combined_probability"]<20 else ("warning" if comb["combined_probability"]<50 else "danger")
+                        st.markdown(f"""<div class="progress-container" style="margin-top:12px;"><div class="progress-bar {bar}" style="width:{int(comb['combined_probability'])}%"></div></div>""", unsafe_allow_html=True)
+                        st.markdown(f"<div class='small' style='margin-top:8px'>{comb['recommendation']}</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    st.markdown("---")
+
+                    # Z + Price row
+                    m1,m2 = st.columns([1,2], vertical_alignment="top")
                     with m1:
-                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Market Cap</div><div class="metric-value">{fmt_curr(base.get('market_cap',0))}</div></div>""", unsafe_allow_html=True)
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.plotly_chart(chart_z_gauge(z), use_container_width=True, config={"displayModeBar": False})
+                        st.markdown(f"<div class='small'><strong>Status:</strong> {z_status}<br><strong>Risk:</strong> {z_risk}<br><strong>Probability:</strong> {z_prob}%</div>", unsafe_allow_html=True)
+                        # Insights panel
+                        st.markdown("---")
+                        st.markdown("#### ✨ Insights")
+                        insights = make_insights(base, ratios, z, z_status, z_prob, ml, comb)
+                        for b in insights:
+                            st.markdown(f"- {b}")
+                        st.markdown("</div>", unsafe_allow_html=True)
+
                     with m2:
-                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Stock Price</div><div class="metric-value">{fmt_curr(base.get('stock_price',0))}</div></div>""", unsafe_allow_html=True)
-                    with m3:
-                        ind = base['industry'] if base['industry'] else "—"
-                        st.markdown(f"""<div class="metric-card"><div class="metric-label">Industry</div><div class="metric-value" style="font-size:1.0rem">{ind[:20]}</div></div>""", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with c2:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.markdown("## 🎯 Risk Assessment")
-                    badge = "safe" if comb["status"]=="Safe" else ("gray" if comb["status"]=="Gray Zone" else "distress")
-                    st.markdown(f'<div class="badge {badge}" style="margin:12px 0;">{comb["status"]}</div>', unsafe_allow_html=True)
-                    b1,b2 = st.columns(2)
-                    with b1:
-                        st.metric("Risk Level", comb["risk_level"])
-                        st.metric("Agreement", "✓ Yes" if comb["model_agreement"] else "✗ No")
-                    with b2:
-                        st.metric("Combined Risk", f"{comb['combined_probability']}%")
-                        st.metric("Confidence", f"{ml['confidence']}%")
-                    bar = "safe" if comb["combined_probability"]<20 else ("warning" if comb["combined_probability"]<50 else "danger")
-                    st.markdown(f"""<div class="progress-container" style="margin-top:12px;"><div class="progress-bar {bar}" style="width:{int(comb['combined_probability'])}%"></div></div>""", unsafe_allow_html=True)
-                    st.markdown(f"<div class='small' style='margin-top:8px'>{comb['recommendation']}</div>", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                m1,m2 = st.columns([1,2])
-                with m1:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.plotly_chart(chart_z_gauge(z), use_container_width=True, config={"displayModeBar": False})
-                    st.markdown(f"<div class='small'><strong>Status:</strong> {z_status}<br><strong>Risk:</strong> {z_risk}<br><strong>Probability:</strong> {z_prob}%</div>", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with m2:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    price_df = fetch_price_history(ticker, years=price_years)
-                    if not price_df.empty:
-                        fig_price = chart_price(price_df, ticker)
-                        if fig_price:
-                            st.plotly_chart(fig_price, use_container_width=True, config={"displayModeBar": False})
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        price_df = fetch_price_history(ticker, years=price_years)
+                        if not price_df.empty:
+                            fig_price = chart_price(price_df, ticker, mode=price_mode)
+                            if fig_price:
+                                st.plotly_chart(fig_price, use_container_width=True, config={"displayModeBar": False})
+                            else:
+                                st.warning("⚠️ Price data available but chart rendering failed.")
                         else:
-                            st.warning("⚠️ Price data available but chart rendering failed.")
-                    else:
-                        st.info("📊 Price history not available for this ticker via yfinance in this environment.")
-                        st.markdown("<div class='small'>Tip: try another interval/years or add an exchange suffix (e.g., BRK-B, RDS-A, RELIANCE.NS).</div>", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
+                            st.info("📊 Price history not available for this ticker via yfinance in this environment.")
+                            st.markdown("<div class='small'>Tip: try a different exchange suffix (e.g., BRK-B → BRK-B, RDS-A → SHEL, RELIANCE.NS).</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
 
-                st.markdown("---")
+                    st.markdown("---")
 
-                ch1,ch2 = st.columns(2)
-                with ch1:
+                    ch1,ch2 = st.columns(2)
+                    with ch1:
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.plotly_chart(chart_z_components(zcomp), use_container_width=True, config={"displayModeBar": False})
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    with ch2:
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.plotly_chart(chart_ratio_radar(ratios), use_container_width=True, config={"displayModeBar": False})
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    st.markdown("---")
+
+                    # ML + Feature importance
+                    bt1,bt2 = st.columns(2)
+                    with bt1:
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.markdown("### 🤖 ML Model Predictions")
+                        st.plotly_chart(chart_model_probs(ml), use_container_width=True, config={"displayModeBar": False})
+                        mdl_df = pd.DataFrame([{"Model":k.replace("_"," ").title(),"Risk %":f"{v['probability_bankrupt']}%","Safe %":f"{v['probability_safe']}%","Prediction":v['risk_label']} for k,v in ml["individual_models"].items()])
+                        st.dataframe(mdl_df, use_container_width=True, hide_index=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    with bt2:
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        if ml.get("rf_features"):
+                            fi_fig = chart_rf_importance(ml["rf_features"])
+                            if fi_fig: st.plotly_chart(fi_fig, use_container_width=True, config={"displayModeBar": False})
+                        else:
+                            st.info("Random Forest feature importance not available.")
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    st.markdown("---")
+
+                    # Ratios table stack
                     st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.plotly_chart(chart_z_components(zcomp), use_container_width=True, config={"displayModeBar": False})
+                    st.markdown("### 📊 Complete Financial Ratios")
+                    ratio_categories = {
+                        "Altman Z Components":["working_capital_to_assets","retained_earnings_to_assets","ebit_to_assets","market_cap_to_liabilities","sales_to_assets"],
+                        "Liquidity Ratios":["current_ratio","quick_ratio","cash_ratio"],
+                        "Leverage Ratios":["debt_to_equity","debt_to_assets","long_term_debt_to_equity","interest_coverage"],
+                        "Profitability Ratios":["return_on_assets","return_on_equity","profit_margin","gross_margin","operating_margin","ebitda_margin"],
+                        "Efficiency Ratios":["asset_turnover","receivables_turnover","inventory_turnover"],
+                        "Cash Flow Ratios":["operating_cashflow_to_sales","free_cashflow_to_equity","capex_to_revenue"]
+                    }
+                    cols = st.columns(len(ratio_categories))
+                    for idx,(category,keys) in enumerate(ratio_categories.items()):
+                        with cols[idx]:
+                            st.markdown(f"**{category}**")
+                            data=[{"Metric":k.replace("_"," ").title(),"Value":result["ratios"][k]} for k in keys if k in result["ratios"]]
+                            if data: st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True, height=240)
                     st.markdown("</div>", unsafe_allow_html=True)
-                with ch2:
+
+                except Exception as e:
                     st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.plotly_chart(chart_ratio_radar(ratios), use_container_width=True, config={"displayModeBar": False})
+                    st.error(f"❌ Analysis failed for '{ticker}'")
+                    st.exception(e)
+                    st.markdown("<div class='small'>Troubleshooting: check ticker spelling, add exchange suffix (.NS, .TO, .L), ensure network and that yfinance is installed.</div>", unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                bt1,bt2 = st.columns(2)
-                with bt1:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.markdown("### 🤖 ML Model Predictions")
-                    st.plotly_chart(chart_model_probs(ml), use_container_width=True, config={"displayModeBar": False})
-                    mdl_df = pd.DataFrame([{"Model":k.replace("_"," ").title(),"Risk %":f"{v['probability_bankrupt']}%","Safe %":f"{v['probability_safe']}%","Prediction":v['risk_label']} for k,v in ml["individual_models"].items()])
-                    st.dataframe(mdl_df, use_container_width=True, hide_index=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-                with bt2:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    if ml.get("rf_features"):
-                        fi_fig = chart_rf_importance(ml["rf_features"])
-                        if fi_fig: st.plotly_chart(fi_fig, use_container_width=True, config={"displayModeBar": False})
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.markdown("### 📊 Complete Financial Ratios")
-                ratio_categories = {
-                    "Altman Z Components":["working_capital_to_assets","retained_earnings_to_assets","ebit_to_assets","market_cap_to_liabilities","sales_to_assets"],
-                    "Liquidity Ratios":["current_ratio","quick_ratio","cash_ratio"],
-                    "Leverage Ratios":["debt_to_equity","debt_to_assets","long_term_debt_to_equity","interest_coverage"],
-                    "Profitability Ratios":["return_on_assets","return_on_equity","profit_margin","gross_margin","operating_margin","ebitda_margin"],
-                    "Efficiency Ratios":["asset_turnover","receivables_turnover","inventory_turnover"],
-                    "Cash Flow Ratios":["operating_cashflow_to_sales","free_cashflow_to_equity","capex_to_revenue"]
-                }
-                cols = st.columns(len(ratio_categories))
-                for idx,(category,keys) in enumerate(ratio_categories.items()):
-                    with cols[idx]:
-                        st.markdown(f"**{category}**")
-                        data=[{"Metric":k.replace("_"," ").title(),"Value":result["ratios"][k]} for k in keys if k in result["ratios"]]
-                        if data: st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True, height=240)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            except Exception as e:
-                st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.error(f"❌ Analysis failed for '{ticker}'")
-                st.exception(e)
-                st.markdown("<div class='small'>Troubleshooting: check ticker spelling, add exchange suffix (.NS, .TO, .L), ensure network and that yfinance is installed.</div>", unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
 
 # -------------------------------
 # COMPARE TAB
@@ -1016,36 +945,39 @@ with tabs[1]:
     line = st.text_input("Enter tickers (comma separated)", value="AAPL, MSFT, TSLA, GOOGL", help="Enter up to 12 tickers separated by commas")
     if st.button("🔍 Compare All", type="primary"):
         tks = normalize_tickers(line)[:12]
-        with st.spinner(f"🔄 Analyzing {len(tks)} companies..."):
-            rows=[]; progress_bar = st.progress(0)
-            for i,tk in enumerate(tks):
-                try:
-                    base = collect_financial_data(tk, prefer=prefer)
-                    ratios = compute_ratios(base)
-                    z,_ = altman_z(ratios)
-                    ml = predict_all(ratios)
-                    comb = combined_assessment(z, ml)
-                    record_industry(base["sector"], tk, z, ml["probability_bankrupt"])
-                    rows.append({"Ticker":tk,"Company":base["company_name"],"Sector":base["sector"],
-                                 "Z-Score":round(z,2),"ML Risk %":ml["probability_bankrupt"],
-                                 "Combined %":comb["combined_probability"],"Status":comb["status"],"Risk Level":comb["risk_level"]})
-                except Exception as e:
-                    rows.append({"Ticker":tk,"Company":"Error","Sector":"-","Z-Score":None,"ML Risk %":None,"Combined %":None,"Status":f"Failed: {str(e)[:30]}","Risk Level":"-"})
-                progress_bar.progress((i+1)/max(len(tks),1))
-            progress_bar.empty()
-            if rows:
-                dfc=pd.DataFrame(rows)
-                st.dataframe(dfc, use_container_width=True, hide_index=True)
-                valid = dfc[dfc["Combined %"].notna()].copy()
-                if not valid.empty:
-                    colors=["#10b981" if s=="Safe" else "#f59e0b" if s=="Gray Zone" else "#ef4444" for s in valid["Status"]]
-                    fig=go.Figure([go.Bar(x=valid["Ticker"], y=valid["Combined %"], marker_color=colors,
-                                          text=valid["Combined %"].round(1), texttemplate="%{text}%", textposition="outside")])
-                    fig.update_layout(title="Combined Bankruptcy Risk Comparison", template="plotly_dark", height=450,
-                                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                      font=dict(color="#cbd5e1"), yaxis_title="Bankruptcy Risk %")
-                    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
-                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        if not tks:
+            st.warning("Please enter at least one valid ticker.")
+        else:
+            with st.spinner(f"🔄 Analyzing {len(tks)} companies..."):
+                rows=[]; progress_bar = st.progress(0)
+                for i,tk in enumerate(tks):
+                    try:
+                        base = collect_financial_data(tk, prefer=prefer)
+                        ratios = compute_ratios(base)
+                        z,_ = altman_z(ratios)
+                        ml = predict_all(ratios)
+                        comb = combined_assessment(z, ml)
+                        record_industry(base["sector"], tk, z, ml["probability_bankrupt"])
+                        rows.append({"Ticker":tk,"Company":base["company_name"],"Sector":base["sector"],
+                                     "Z-Score":round(z,2),"ML Risk %":ml["probability_bankrupt"],
+                                     "Combined %":comb["combined_probability"],"Status":comb["status"],"Risk Level":comb["risk_level"]})
+                    except Exception as e:
+                        rows.append({"Ticker":tk,"Company":"Error","Sector":"-","Z-Score":None,"ML Risk %":None,"Combined %":None,"Status":f"Failed: {str(e)[:30]}","Risk Level":"-"})
+                    progress_bar.progress((i+1)/max(len(tks),1))
+                progress_bar.empty()
+                if rows:
+                    dfc=pd.DataFrame(rows)
+                    st.dataframe(dfc, use_container_width=True, hide_index=True)
+                    valid = dfc[dfc["Combined %"].notna()].copy()
+                    if not valid.empty:
+                        colors=["#10b981" if s=="Safe" else "#f59e0b" if s=="Gray Zone" else "#ef4444" for s in valid["Status"]]
+                        fig=go.Figure([go.Bar(x=valid["Ticker"], y=valid["Combined %"], marker_color=colors,
+                                              text=valid["Combined %"].round(1), texttemplate="%{text}%", textposition="outside")])
+                        fig.update_layout(title="Combined Bankruptcy Risk Comparison", template="plotly_dark", height=450,
+                                          margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                                          font=dict(color="#cbd5e1"), yaxis_title="Bankruptcy Risk %")
+                        fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
+                        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
 
 # -------------------------------
@@ -1179,4 +1111,3 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
-
