@@ -337,7 +337,7 @@ def compute_ratios(d: dict) -> dict:
         "debt_to_equity": TL/TE,
         "debt_to_assets": TL/TA,
         "long_term_debt_to_equity": (d.get("long_term_debt",0.0) or 0.0)/TE,
-        "interest_coverage": (d.get("ebit",0.0) or 0.0)/_safe_den(d.get("interest_expense",1.0)),
+        "interest_coverage": (d.get("ebit",0.0) or 0.0)/_safe_den(d.get("interest_expense",0.0), floor=1.0),
 
         "return_on_assets": ((d.get("net_income",0.0) or 0.0)/TA)*100,
         "return_on_equity": ((d.get("net_income",0.0) or 0.0)/TE)*100,
@@ -430,10 +430,11 @@ def predict_all(r):
     pack=build_models(); scaler,models=pack["scaler"],pack["models"]
     Xs=scaler.transform(features_from_ratios(r))
     preds={}; votes=[]; probs=[]
-    for name,m in models.items():
-        p=int(m.predict(Xs)[0]); pr=m.predict_proba(Xs)[0,1]
-        preds[name]={"prediction":p,"probability_bankrupt":round(pr*100,2),"probability_safe":round((1-pr)*100,2),
-                     "risk_label":"High Risk" if p==1 else "Low Risk"}
+    for name, m in models.items():
+    p, pr = int(m.predict(Xs)[0]), float(m.predict_proba(Xs)[0, 1])
+    preds[name] = {"prediction": p, "probability_bankrupt": round(pr * 100, 2),
+                   "probability_safe": round((1 - pr) * 100, 2),
+                   "risk_label": "High Risk" if p == 1 else "Low Risk"}
         votes.append(p); probs.append(pr*100)
     avg=float(np.mean(probs)) if probs else 0.0
     maj=1 if sum(votes)>len(votes)/2 else 0
@@ -896,7 +897,7 @@ with tabs[0]:
                         st.markdown('<div class="card">', unsafe_allow_html=True)
                         st.markdown("### 🤖 ML Model Predictions")
                         st.plotly_chart(chart_model_probs(ml), use_container_width=True, config={"displayModeBar": False})
-                        mdl_df = pd.DataFrame([{"Model":k.replace("_"," ").title(),"Risk %":f"{v['probability_bankrupt']}%","Safe %":f"{v['probability_safe']}%","Prediction":v['risk_label']} for k,v in ml["individual_models"].items()])
+                        mdl_df = pd.DataFrame([{"Model":k.replace("_"," ").title(),"Risk %":f"{v['probability_bankrupt']:.2f}%","Safe %":f"{v['probability_safe']:.2f}%","Prediction":v['risk_label']} for k,v in ml["individual_models"].items()])
                         st.dataframe(mdl_df, use_container_width=True, hide_index=True)
                         st.markdown("</div>", unsafe_allow_html=True)
                     with bt2:
@@ -1111,3 +1112,4 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
