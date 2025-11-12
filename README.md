@@ -28,3 +28,8 @@ pip install -r requirements.txt
 
 # 3) Run the app
 streamlit run app.py
+## 📦 Requirements
+
+Install dependencies:
+```bash
+pip install -r requirements.txt
