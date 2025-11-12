@@ -592,14 +592,31 @@ def chart_price(df: pd.DataFrame, ticker: str, mode: str = "auto"):
 
 def chart_z_components(components: dict):
     df = pd.DataFrame({"Component": list(components.keys()), "Value": list(components.values())})
-    colors = ['#6366f1' if v>=0 else '#ef4444' for v in df['Value']]
-    fig = go.Figure([go.Bar(x=df["Component"], y=df["Value"], marker_color=colors,
-                            text=df["Value"].round(3), textposition="outside")])
-    fig.update_layout(title="Altman Z-Score Components", template="plotly_dark", height=420,
-                      margin=dict(l=20,r=20,t=80,b=80), paper_bgcolor="rgba(0,0,0,0)",
-                      plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"), showlegend=False)
+    colors = ['#6366f1' if v >= 0 else '#ef4444' for v in df['Value']]
+    vmax, vmin = float(df["Value"].max()), float(df["Value"].min())
+    headroom_top = 1.3 if vmax > 0 else 0.2
+    headroom_bot = 0.2 if vmin < 0 else 0.0
+
+    fig = go.Figure([
+        go.Bar(
+            x=df["Component"], y=df["Value"], marker_color=colors,
+            text=df["Value"].round(3), textposition="outside",
+            cliponaxis=False  # <- prevents clipping of outside labels
+        )
+    ])
+    fig.update_layout(
+        title="Altman Z-Score Components", template="plotly_dark", height=440,
+        margin=dict(l=20, r=20, t=100, b=90),  # more top/bottom room
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#cbd5e1"), showlegend=False,
+        uniformtext_minsize=10, uniformtext_mode="hide"
+    )
     fig.update_xaxes(showgrid=False, tickangle=-45)
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+    fig.update_yaxes(
+        showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)",
+        automargin=True,
+        range=[min(0, vmin) - headroom_bot, vmax * headroom_top]  # add headroom above labels
+    )
     return fig
 
 def chart_ratio_radar(r: dict):
@@ -1119,6 +1136,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
