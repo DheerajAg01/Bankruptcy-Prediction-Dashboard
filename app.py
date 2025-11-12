@@ -7,7 +7,7 @@
 import re
 import time
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO
 
 import streamlit as st
@@ -225,8 +225,8 @@ def fetch_price_history(ticker: str, years: int = 5) -> pd.DataFrame:
     """
     Robust price fetch using Yahoo Finance with Alpha Vantage fallback.
     """
-    end = datetime.datetime.today()
-    start = end - datetime.timedelta(days=365 * years)
+    end = datetime.today()
+    start = end - timedelta(days=365 * years)
 
     # ---- Try Yahoo Finance first
     try:
@@ -1159,6 +1159,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
