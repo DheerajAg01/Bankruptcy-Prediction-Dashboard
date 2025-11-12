@@ -20,6 +20,17 @@ try:
 except Exception:
     yf = None
 
+# Added for Alpha Vantage + Stooq fallback
+try:
+    from alpha_vantage.timeseries import TimeSeries
+    import pandas_datareader.data as web
+except Exception:
+    TimeSeries = None
+    web = None
+
+# Alpha Vantage API key
+ALPHA_KEY = "J9EGBEZLO30NBACU"
+
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -210,63 +221,51 @@ def fetch_yahoo_financials(ticker: str, prefer: str = "auto", retries: int = 2, 
     raise RuntimeError(f"Yahoo Finance fetch failed for {ticker}: {last_err}")
 
 @st.cache_data(show_spinner=False, ttl=60*15)
-def fetch_price_history(ticker: str, years: int = 5, retries: int = 3, pause: float = 0.7) -> pd.DataFrame:
+def fetch_price_history(ticker: str, years: int = 5) -> pd.DataFrame:
     """
-    Robust price fetch with multiple fallback strategies and strict normalization.
+    Robust price fetch using Yahoo Finance with Alpha Vantage fallback.
     """
-    if yf is None:
-        return pd.DataFrame()
+    end = datetime.datetime.today()
+    start = end - datetime.timedelta(days=365 * years)
 
-    last_err = None
-    for attempt in range(retries):
-        try:
-            # Method 1: yf.download
-            df = yf.download(
-                ticker, period=f"{years}y", interval="1d",
-                auto_adjust=True, progress=False, ignore_tz=True
-            )
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df = df.reset_index()
-                if "Date" not in df.columns and "Datetime" in df.columns:
-                    df = df.rename(columns={"Datetime": "Date"})
-                elif "Date" not in df.columns:
-                    df = df.rename(columns={df.columns[0]: "Date"})
-                df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True)
-                if getattr(df["Date"].dt, "tz", None) is not None:
-                    df["Date"] = df["Date"].dt.tz_localize(None)
-                df = df[df["Date"].notna()].copy()
-                for col in ["Open","High","Low","Close","Adj Close","Volume"]:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors="coerce")
-                df = df.sort_values("Date").reset_index(drop=True)
-                price_cols = [c for c in ["Close","Adj Close"] if c in df.columns]
-                if price_cols and df[price_cols[0]].notna().any():
-                    return df
+    # ---- Try Yahoo Finance first
+    try:
+        df = yf.download(ticker, period=f"{years}y", interval="1d",
+                         auto_adjust=True, progress=False)
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            df = df.reset_index()
+            if "Date" not in df.columns and "Datetime" in df.columns:
+                df.rename(columns={"Datetime": "Date"}, inplace=True)
+            elif "Date" not in df.columns:
+                df.rename(columns={df.columns[0]: "Date"}, inplace=True)
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            return df
+    except Exception:
+        pass  # continue to fallback
 
-            # Method 2: Ticker.history
-            tkr = yf.Ticker(ticker)
-            df = tkr.history(period=f"{years}y", interval="1d", auto_adjust=True)
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df = df.reset_index()
-                if "Date" not in df.columns:
-                    df = df.rename(columns={df.columns[0]: "Date"})
-                df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-                if getattr(df["Date"].dt, "tz", None) is not None:
-                    df["Date"] = df["Date"].dt.tz_localize(None)
-                df = df[df["Date"].notna()].copy()
-                for col in ["Open","High","Low","Close","Volume","Adj Close"]:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors="coerce")
-                df = df.sort_values("Date").reset_index(drop=True)
-                if "Close" in df.columns and df["Close"].notna().any():
-                    return df
+    # ---- Fallback: Alpha Vantage
+    try:
+        ts = TimeSeries(key=ALPHA_KEY, output_format="pandas")
+        df, meta = ts.get_daily_adjusted(symbol=ticker, outputsize="full")
+        df = df.rename(columns={"5. adjusted close": "Adj Close"})
+        df.index = pd.to_datetime(df.index)
+        df = df.sort_index().reset_index().rename(columns={"index": "Date"})
+        df = df[df["Date"] >= start]
+        return df
+    except Exception:
+        pass  # continue to next fallback
 
-            raise ValueError("All fetch methods returned empty data")
-        except Exception as e:
-            last_err = e
-            if attempt < retries - 1:
-                time.sleep(pause)
+    # ---- Optional: Fallback 2 — Stooq (no key, global tickers)
+    try:
+        df = web.DataReader(ticker, "stooq", start, end)
+        df = df.sort_index().reset_index()
+        df.rename(columns={"Close": "Adj Close"}, inplace=True)
+        return df
+    except Exception:
+        pass
 
+    # ---- If all failed
+    st.warning(f"⚠️ No price data available for '{ticker}' from Yahoo, Alpha Vantage, or Stooq.")
     return pd.DataFrame()
 
 # -------------------------------
@@ -1160,6 +1159,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
