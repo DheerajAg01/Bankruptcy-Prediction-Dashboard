@@ -243,28 +243,28 @@ def fetch_price_history(ticker: str, years: int = 5) -> pd.DataFrame:
     except Exception:
         pass  # continue to fallback
 
-    # ---- Fallback: Alpha Vantage
+             # ---- Fallback: Alpha Vantage
     try:
-ts = TimeSeries(key=ALPHA_KEY, output_format="pandas")
-df, _ = ts.get_daily_adjusted(symbol=ticker, outputsize="full")
-df = df.rename(columns={
-    "1. open": "Open",
-    "2. high": "High",
-    "3. low": "Low",
-    "4. close": "Close",
-    "5. adjusted close": "Adj Close",
-    "6. volume": "Volume"
-})
-df.index = pd.to_datetime(df.index, errors="coerce")
-df = df.sort_index().reset_index().rename(columns={"index": "Date"})
-# make sure types are numeric
-for c in ["Open","High","Low","Close","Adj Close","Volume"]:
-    if c in df.columns:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-df = df[df["Date"] >= start]
-return df
+        ts = TimeSeries(key=ALPHA_KEY, output_format="pandas")
+        df, _ = ts.get_daily_adjusted(symbol=ticker, outputsize="full")
+        df = df.rename(columns={
+            "1. open": "Open",
+            "2. high": "High",
+            "3. low": "Low",
+            "4. close": "Close",
+            "5. adjusted close": "Adj Close",
+            "6. volume": "Volume"
+        })
+        df.index = pd.to_datetime(df.index, errors="coerce")
+        df = df.sort_index().reset_index().rename(columns={"index": "Date"})
+        for c in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df[df["Date"] >= start]
+        return df
     except Exception:
         pass  # continue to next fallback
+        
 
     # ---- Optional: Fallback 2 — Stooq (no key, global tickers)
     try:
@@ -1106,6 +1106,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
