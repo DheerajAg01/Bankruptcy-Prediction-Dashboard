@@ -427,21 +427,28 @@ def build_models():
 def features_from_ratios(r): return np.array([r.get(k,0.0) for k in FEATURES], dtype=float).reshape(1,-1)
 
 def predict_all(r):
-    pack=build_models(); scaler,models=pack["scaler"],pack["models"]
-    Xs=scaler.transform(features_from_ratios(r))
-    preds={}; votes=[]; probs=[]
-for name, m in models.items():
-    p, pr = int(m.predict(Xs)[0]), float(m.predict_proba(Xs)[0, 1])
-    preds[name] = {"prediction": p, "probability_bankrupt": round(pr * 100, 2),
-                   "probability_safe": round((1 - pr) * 100, 2),
-                   "risk_label": "High Risk" if p == 1 else "Low Risk"}
-    votes.append(p); probs.append(pr * 100)
-    avg=float(np.mean(probs)) if probs else 0.0
-    maj=1 if sum(votes)>len(votes)/2 else 0
-    return {"ensemble_prediction":"High Risk" if maj==1 else "Low Risk",
-            "probability_bankrupt":round(avg,2),"probability_safe":round(100-avg,2),
-            "confidence":round(max(avg,100-avg),2),"individual_models":preds,
-            "rf_features": models["random_forest"].feature_importances_.tolist() if "random_forest" in models else None}
+    pack = build_models()
+    scaler, models = pack["scaler"], pack["models"]
+    Xs = scaler.transform(features_from_ratios(r))
+    preds = {}; votes = []; probs = []
+
+    for name, m in models.items():
+        p, pr = int(m.predict(Xs)[0]), float(m.predict_proba(Xs)[0, 1])
+        preds[name] = {"prediction": p, "probability_bankrupt": round(pr * 100, 2),
+                       "probability_safe": round((1 - pr) * 100, 2),
+                       "risk_label": "High Risk" if p == 1 else "Low Risk"}
+        votes.append(p)
+        probs.append(pr * 100)
+
+    avg = float(np.mean(probs)) if probs else 0.0
+    maj = 1 if sum(votes) > len(votes) / 2 else 0
+    return {"ensemble_prediction": "High Risk" if maj == 1 else "Low Risk",
+            "probability_bankrupt": round(avg, 2),
+            "probability_safe": round(100 - avg, 2),
+            "confidence": round(max(avg, 100 - avg), 2),
+            "individual_models": preds,
+            "rf_features": models["random_forest"].feature_importances_.tolist()
+                           if "random_forest" in models else None}
 
 def combined_assessment(z, ml):
     zp=z_probability(z); mp=ml["probability_bankrupt"]; comb=(0.6*mp)+(0.4*zp)
@@ -1112,6 +1119,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
