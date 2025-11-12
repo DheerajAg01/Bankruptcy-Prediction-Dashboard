@@ -7,3 +7,5 @@ plotly
 requests
 matplotlib
 xgboost
+alpha_vantage
+pandas_datareader
