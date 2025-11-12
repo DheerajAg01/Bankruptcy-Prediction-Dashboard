@@ -540,79 +540,67 @@ def _csv_from_history_last():
 def chart_price(df: pd.DataFrame, ticker: str, mode: str = "auto"):
     if df is None or df.empty or "Date" not in df.columns:
         return None
+    df = df.copy().sort_values("Date").reset_index(drop=True)
 
-    d = df.copy()
-    d = d.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-    # ensure datatypes are numeric
+    # ensure numeric types
     for c in ("Open","High","Low","Close","Adj Close","Volume"):
-        if c in d.columns:
-            d[c] = pd.to_numeric(d[c], errors="coerce")
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # decide render path
-    have_ohlc = all(c in d.columns for c in ("Open","High","Low","Close")) \
-                and d[["Open","High","Low","Close"]].dropna().shape[0] >= 5
-    if mode == "line":
-        have_ohlc = False
-    if mode == "candle" and not have_ohlc:
-        mode = "line"
+    try:
+        have_ohlc = all(c in df.columns for c in ("Open","High","Low","Close")) \
+                    and df[["Open","High","Low","Close"]].dropna().shape[0] >= 5
+        if mode == "line":
+            have_ohlc = False
+        if mode == "candle" and not have_ohlc:
+            mode = "line"
 
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.7, 0.3], vertical_spacing=0.05,
-                        subplot_titles=(f"{ticker} Stock Price", "Volume"))
+        fig = make_subplots(rows=2, cols=1, row_heights=[0.7,0.3], vertical_spacing=0.05,
+                            subplot_titles=(f"{ticker} Stock Price","Volume"))
 
-    # price trace
-    if have_ohlc and mode in ("auto","candle"):
-        valid = d.dropna(subset=["Open","High","Low","Close"])
-        fig.add_trace(go.Candlestick(
-            x=valid["Date"],
-            open=valid["Open"], high=valid["High"], low=valid["Low"], close=valid["Close"],
-            name="Price", increasing_line_color="#10b981", decreasing_line_color="#ef4444"
-        ), row=1, col=1)
-    else:
-        price_col = "Close" if "Close" in d.columns and d["Close"].notna().any() \
-                   else "Adj Close" if "Adj Close" in d.columns and d["Adj Close"].notna().any() \
-                   else None
-        if not price_col:
-            return None
-        valid = d.dropna(subset=[price_col])
-        if valid.empty:
-            return None
-        fig.add_trace(go.Scatter(
-            x=valid["Date"], y=valid[price_col], mode="lines",
-            name=price_col, line=dict(width=2),
-            fill="tozeroy", fillcolor="rgba(99,102,241,0.12)"
-        ), row=1, col=1)
+        if have_ohlc and mode in ("auto","candle"):
+            valid = df.dropna(subset=["Open","High","Low","Close"])
+            fig.add_trace(go.Candlestick(
+                x=valid["Date"], open=valid["Open"], high=valid["High"],
+                low=valid["Low"], close=valid["Close"],
+                name="Price", increasing_line_color="#10b981", decreasing_line_color="#ef4444"
+            ), row=1, col=1)
+        else:
+            price_col = "Close" if ("Close" in df.columns and df["Close"].notna().any()) \
+                       else "Adj Close" if ("Adj Close" in df.columns and df["Adj Close"].notna().any()) \
+                       else None
+            if not price_col:
+                return None
+            valid = df.dropna(subset=[price_col])
+            if valid.empty:
+                return None
+            fig.add_trace(go.Scatter(
+                x=valid["Date"], y=valid[price_col], mode="lines", name=price_col,
+                line=dict(width=2), fill="tozeroy", fillcolor="rgba(99,102,241,0.12)"
+            ), row=1, col=1)
 
-    # volume
-    if "Volume" in d.columns and d["Volume"].notna().any():
-        fig.add_trace(go.Bar(x=d["Date"], y=d["Volume"], name="Volume", opacity=0.55),
-                      row=2, col=1)
+        if "Volume" in df.columns and df["Volume"].notna().any():
+            fig.add_trace(go.Bar(x=df["Date"], y=df["Volume"], name="Volume", opacity=0.55),
+                          row=2, col=1)
 
-    # layout polish
-    fig.update_layout(
-        template="plotly_dark", height=520,
-        margin=dict(l=20, r=20, t=60, b=20),
-        xaxis_rangeslider_visible=False,
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#cbd5e1"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)",
-                     rangebreaks=[dict(bounds=["sat", "mon"])])  # skip weekends
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+        fig.update_layout(template="plotly_dark", height=520, margin=dict(l=20,r=20,t=60,b=20),
+                          xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)",
+                          plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"),
+                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)",
+                         rangebreaks=[dict(bounds=["sat","mon"])])
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+        return fig
 
-    return fig       
     except KeyError:
         # any unexpected column mismatch -> graceful line fallback
-        price_col = "Adj Close" if "Adj Close" in df.columns else "Close" if "Close" in df.columns else None
+        price_col = "Adj Close" if "Adj Close" in df.columns else ("Close" if "Close" in df.columns else None)
         if not price_col or df[price_col].dropna().empty:
             return None
         fig = go.Figure(go.Scatter(x=df["Date"], y=df[price_col], mode="lines", name=price_col))
         fig.update_layout(template="plotly_dark", height=520, margin=dict(l=20,r=20,t=60,b=20),
                           paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         return fig
-
-import plotly.graph_objects as go
-import pandas as pd
 
 def chart_z_components(components: dict):
     df = pd.DataFrame({"Component": list(components.keys()), "Value": list(components.values())})
@@ -1126,6 +1114,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
