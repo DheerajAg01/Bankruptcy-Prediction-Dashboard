@@ -595,8 +595,8 @@ def chart_z_components(components: dict):
     colors = ['#6366f1' if v>=0 else '#ef4444' for v in df['Value']]
     fig = go.Figure([go.Bar(x=df["Component"], y=df["Value"], marker_color=colors,
                             text=df["Value"].round(3), textposition="outside")])
-    fig.update_layout(title="Altman Z-Score Components", template="plotly_dark", height=400,
-                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)",
+    fig.update_layout(title="Altman Z-Score Components", template="plotly_dark", height=420,
+                      margin=dict(l=20,r=20,t=80,b=80), paper_bgcolor="rgba(0,0,0,0)",
                       plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"), showlegend=False)
     fig.update_xaxes(showgrid=False, tickangle=-45)
     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
@@ -1119,6 +1119,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
