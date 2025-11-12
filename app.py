@@ -639,18 +639,42 @@ def chart_ratio_radar(r: dict):
     return fig
 
 def chart_model_probs(ml: dict):
-    rows=[{"Model":k.replace("_"," ").title(),"Bankrupt":v["probability_bankrupt"],"Safe":v["probability_safe"]}
-          for k,v in ml["individual_models"].items()]
-    df=pd.DataFrame(rows)
-    fig=go.Figure()
-    fig.add_trace(go.Bar(name="Bankruptcy Risk", x=df["Model"], y=df["Bankrupt"], marker_color="#ef4444",
-                         text=df["Bankrupt"].round(1), texttemplate="%{text}%", textposition="outside"))
-    fig.add_trace(go.Bar(name="Safe", x=df["Model"], y=df["Safe"], marker_color="#10b981",
-                         text=df["Safe"].round(1), texttemplate="%{text}%", textposition="outside"))
-    fig.update_layout(title="Model Predictions Comparison", template="plotly_dark", height=400, barmode="group",
-                      margin=dict(l=20,r=20,t=60,b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color="#cbd5e1"), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    fig.update_xaxes(showgrid=False); fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0,100])
+    rows = [{"Model": k.replace("_"," ").title(),
+             "Bankrupt": v["probability_bankrupt"],
+             "Safe": v["probability_safe"]}
+            for k, v in ml["individual_models"].items()]
+    df = pd.DataFrame(rows)
+    ymax = float(max(df["Bankrupt"].max(), df["Safe"].max()))
+    headroom = max(105.0, ymax * 1.12)  # allow labels above bars
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Bankruptcy Risk", x=df["Model"], y=df["Bankrupt"],
+        marker_color="#ef4444",
+        text=(df["Bankrupt"].round(1).astype(str) + "%"),
+        textposition="outside", cliponaxis=False
+    ))
+    fig.add_trace(go.Bar(
+        name="Safe", x=df["Model"], y=df["Safe"],
+        marker_color="#10b981",
+        text=(df["Safe"].round(1).astype(str) + "%"),
+        textposition="outside", cliponaxis=False
+    ))
+
+    fig.update_layout(
+        title="Model Predictions Comparison", template="plotly_dark", height=420,
+        barmode="group",
+        margin=dict(l=20, r=20, t=80, b=60),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#cbd5e1"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        uniformtext_minsize=10, uniformtext_mode="hide"
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(
+        showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)",
+        range=[0, headroom], automargin=True
+    )
     return fig
 
 def chart_rf_importance(importances):
@@ -1136,6 +1160,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
