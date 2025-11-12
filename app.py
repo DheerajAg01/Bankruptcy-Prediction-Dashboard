@@ -430,7 +430,7 @@ def predict_all(r):
     pack=build_models(); scaler,models=pack["scaler"],pack["models"]
     Xs=scaler.transform(features_from_ratios(r))
     preds={}; votes=[]; probs=[]
-    for name, m in models.items():
+for name, m in models.items():
     p, pr = int(m.predict(Xs)[0]), float(m.predict_proba(Xs)[0, 1])
     preds[name] = {"prediction": p, "probability_bankrupt": round(pr * 100, 2),
                    "probability_safe": round((1 - pr) * 100, 2),
@@ -1112,5 +1112,6 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
