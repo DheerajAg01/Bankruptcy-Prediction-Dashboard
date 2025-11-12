@@ -435,7 +435,7 @@ for name, m in models.items():
     preds[name] = {"prediction": p, "probability_bankrupt": round(pr * 100, 2),
                    "probability_safe": round((1 - pr) * 100, 2),
                    "risk_label": "High Risk" if p == 1 else "Low Risk"}
-        votes.append(p); probs.append(pr*100)
+    votes.append(p); probs.append(pr * 100)
     avg=float(np.mean(probs)) if probs else 0.0
     maj=1 if sum(votes)>len(votes)/2 else 0
     return {"ensemble_prediction":"High Risk" if maj==1 else "Low Risk",
@@ -1112,6 +1112,7 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
