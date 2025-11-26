@@ -17,9 +17,9 @@ import numpy as np
 
 # 3rd party libs (optional guards)
 try:
-    import yfinance as yf
+    import yfinance as yf
 except Exception:
-    yf = None
+    yf = None
 
 try:
     from alpha_vantage.timeseries import TimeSeries
@@ -1263,3 +1263,4 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
