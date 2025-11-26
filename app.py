@@ -438,7 +438,7 @@ def compute_ratios(d: dict) -> dict:
         "debt_to_equity": TL / TE,
         "debt_to_assets": TL / TA,
         "long_term_debt_to_equity": (d.get("long_term_debt", 0.0) or 0.0) / TE,
-        "interest_coverage": (d.get("ebit", 0.0) or 0.0) / _safe_den(d.get("interest_expense", 1.0)),
+        "interest_coverage": (d.get("ebit", 0.0) or 0.0) / abs(d.get("interest_expense", 0.0) or 1.0) if abs(d.get("interest_expense", 0.0) or 0.0) >= 1 else 0.0,
 
         "return_on_assets": ((d.get("net_income", 0.0) or 0.0) / TA) * 100,
         "return_on_equity": ((d.get("net_income", 0.0) or 0.0) / TE) * 100,
@@ -1521,4 +1521,5 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
