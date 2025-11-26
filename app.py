@@ -1,7 +1,7 @@
-# app.py — Bankruptcy Prediction Dashboard (Single File, Fixed & Polished UI)
+# app.py — Bankruptcy Prediction Dashboard (Single File, Polished UI + News)
 # Run:
 #   pip install --upgrade pip
-#   pip install streamlit yfinance scikit-learn plotly xgboost pandas numpy alpha_vantage pandas-datareader
+#   pip install streamlit yfinance scikit-learn plotly xgboost pandas numpy alpha_vantage pandas-datareader requests
 #   streamlit run app.py
 
 import re
@@ -10,6 +10,7 @@ import math
 from datetime import datetime, timedelta
 from io import StringIO
 import os
+import requests
 
 import streamlit as st
 import pandas as pd
@@ -51,7 +52,7 @@ except Exception:
     XGBOOST_AVAILABLE = False
 
 # -------------------------------
-# PAGE CONFIG (must be first UI call)
+# PAGE CONFIG
 # -------------------------------
 st.set_page_config(
     page_title="Bankruptcy Prediction Dashboard",
@@ -60,7 +61,7 @@ st.set_page_config(
 )
 
 # -------------------------------
-# GLOBAL THEME / CSS (clean dark)
+# GLOBAL THEME / CSS
 # -------------------------------
 PRO_CSS = """
 <style>
@@ -75,10 +76,7 @@ html,body,[data-testid="stAppViewContainer"]{
   background:radial-gradient(1200px 800px at 15% 10%, #101744 0%, #0b0f2a 35%, #080b1e 100%) fixed;
 }
 
-/* tighten base spacing */
 .block-container { padding-top: 1.2rem; padding-bottom: 1.2rem; }
-
-/* Tabs spacing */
 [data-baseweb="tab-list"] { gap: 6px; }
 
 /* Cards */
@@ -91,37 +89,43 @@ html,body,[data-testid="stAppViewContainer"]{
 .metric-label{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .metric-value{font-size:1.6rem;font-weight:700;color:var(--text)}
 .small{font-size:.86rem;color:var(--muted)}
-.badge{display:inline-block;padding:6px 10px;border-radius:8px;color:#fff;font-weight:600}
-.badge.safe{background:var(--good)}.badge.gray{background:var(--warn)}.badge.distress{background:var(--bad)}
-.progress-container{height:12px;background:rgba(255,255,255,.06);border-radius:8px;overflow:hidden}
-.progress-bar.safe{background:var(--good);height:100%}.progress-bar.warning{background:var(--warn);height:100%}.progress-bar.danger{background:var(--bad);height:100%}
 
-/* Buttons polish */
+.badge{display:inline-block;padding:6px 10px;border-radius:8px;color:#fff;font-weight:600}
+.badge.safe{background:var(--good)}
+.badge.gray{background:var(--warn)}
+.badge.distress{background:var(--bad)}
+
+.progress-container{height:12px;background:rgba(255,255,255,.06);border-radius:8px;overflow:hidden}
+.progress-bar.safe{background:var(--good);height:100%}
+.progress-bar.warning{background:var(--warn);height:100%}
+.progress-bar.danger{background:var(--bad);height:100%}
+
+/* Buttons */
 button[kind="secondary"] { border:1px solid rgba(99,102,241,.35) !important }
 .stButton>button { border-radius:10px; padding:.55rem .8rem }
 
 /* DataFrame dark styling */
 [data-testid="stDataFrame"] div, [data-testid="stTable"] div { color: var(--text) !important; }
 [data-testid="stDataFrame"] { background: transparent !important; }
-[data-testid="stDataFrame"] [class*="row_heading"], 
+[data-testid="stDataFrame"] [class*="row_heading"],
 [data-testid="stDataFrame"] [class*="blank"] { background: rgba(15,23,42,.5) !important; }
 [data-testid="stDataFrame"] [class*="column_heading"] { background: rgba(15,23,42,.7) !important; }
 
-/* Form labels alignment */
+/* Labels */
 .css-ocqkz7, .stTextInput label, .stSelectbox label { color: var(--muted) !important }
 </style>
 """
 st.markdown(PRO_CSS, unsafe_allow_html=True)
 
 # -------------------------------
-# SESSION
+# SESSION STATE
 # -------------------------------
 if "industry" not in st.session_state:
     st.session_state.industry = {}
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# Alpha Vantage key (env var supported)
+# Alpha Vantage key
 ALPHA_KEY = os.getenv("ALPHA_VANTAGE_KEY", "J9EGBEZLO30NBACU")
 
 # -------------------------------
@@ -133,7 +137,7 @@ def normalize_tickers(raw: str):
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     out = []
     for p in parts:
-        t = re.sub(r"[^A-Za-z0-9\.\-]", "", p)
+        t = re.sub(r"[^A-Za-z0-9.\-]", "", p)
         if "." in t:
             a, b = t.split(".", 1)
             t = a.upper() + "." + b.upper()
@@ -186,7 +190,7 @@ def _get_with_candidates(s: pd.Series, names) -> float:
     return 0.0
 
 # -------------------------------
-# YFINANCE FETCHERS (robust)
+# YFINANCE FETCHERS
 # -------------------------------
 def _first_nonempty_df(obj, attr_names):
     for nm in attr_names:
@@ -242,69 +246,123 @@ def fetch_yahoo_financials(ticker: str, prefer: str = "auto", retries: int = 2, 
 
 @st.cache_data(show_spinner=False, ttl=60 * 15)
 def fetch_price_history(ticker: str, years: int = 5) -> pd.DataFrame:
-    """Robust price fetch using Yahoo Finance with Alpha Vantage fallback (and optional Stooq)."""
+    """
+    Robust price fetch using Ticker.history first, then yf.download.
+    Returns df with 'Date' plus OHLC and Volume.
+    """
+    if yf is None:
+        st.warning("yfinance is not installed; cannot load price history.")
+        return pd.DataFrame()
+
     end = datetime.today()
     start = end - timedelta(days=365 * years)
 
-    # 1) Try Yahoo
+    df = pd.DataFrame()
+
+    # 1) Primary: Ticker.history
     try:
-        if yf is not None:
-            df = yf.download(ticker, period=f"{years}y", interval="1d", auto_adjust=True, progress=False)
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df = df.reset_index()
-                if "Date" not in df.columns and "Datetime" in df.columns:
-                    df.rename(columns={"Datetime": "Date"}, inplace=True)
-                elif "Date" not in df.columns:
-                    df.rename(columns={df.columns[0]: "Date"}, inplace=True)
-                df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-                for col in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors="coerce")
-                return df
+        tkr = yf.Ticker(ticker)
+        df = tkr.history(start=start, end=end, interval="1d", auto_adjust=True)
     except Exception:
-        pass
+        df = pd.DataFrame()
 
-    # 2) Fallback Alpha Vantage
+    # 2) Fallback: yf.download
+    if df is None or df.empty:
+        try:
+            df = yf.download(
+                ticker,
+                start=start,
+                end=end,
+                interval="1d",
+                auto_adjust=True,
+                progress=False
+            )
+        except Exception:
+            df = pd.DataFrame()
+
+    if df is None or df.empty:
+        st.warning(f"📊 No price history available from Yahoo Finance for {ticker}.")
+        return pd.DataFrame()
+
+    df = df.copy().reset_index()
+
+    if "Date" not in df.columns:
+        if "Datetime" in df.columns:
+            df.rename(columns={"Datetime": "Date"}, inplace=True)
+        else:
+            df.rename(columns={df.columns[0]: "Date"}, inplace=True)
+
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+    for col in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = df.sort_values("Date").dropna(subset=["Date"])
+    return df
+
+# -------------------------------
+# NEWS SENTIMENT (Alpha Vantage)
+# -------------------------------
+@st.cache_data(show_spinner=False, ttl=60 * 10)
+def fetch_news_sentiment(ticker: str, limit: int = 12):
+    """
+    Fetch latest global market news & sentiment for a ticker
+    using Alpha Vantage NEWS_SENTIMENT endpoint.
+    """
+    if not ALPHA_KEY:
+        return [], "Missing Alpha Vantage API key."
+
+    params = {
+        "function": "NEWS_SENTIMENT",
+        "tickers": ticker,
+        "apikey": ALPHA_KEY,
+        "sort": "LATEST",
+        "limit": limit,
+    }
+
     try:
-        if TimeSeries is not None and ALPHA_KEY:
-            ts = TimeSeries(key=ALPHA_KEY, output_format="pandas")
-            df, _ = ts.get_daily_adjusted(symbol=ticker, outputsize="full")
+        resp = requests.get("https://www.alphavantage.co/query", params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return [], f"Request failed: {e}"
 
-            df = df.rename(columns={
-                "1. open": "Open",
-                "2. high": "High",
-                "3. low": "Low",
-                "4. close": "Close",
-                "5. adjusted close": "Adj Close",
-                "6. volume": "Volume"
+    feed = data.get("feed", [])
+    if not isinstance(feed, list):
+        return [], data.get("note") or data.get("error") or "No news feed returned."
+
+    items = []
+    for art in feed:
+        try:
+            ts_str = art.get("time_published")
+            dt = None
+            if ts_str:
+                try:
+                    dt = datetime.strptime(ts_str, "%Y%m%dT%H%M%S")
+                except Exception:
+                    dt = None
+
+            score_raw = art.get("overall_sentiment_score")
+            try:
+                score = float(score_raw) if score_raw is not None else None
+            except Exception:
+                score = None
+
+            items.append({
+                "title": art.get("title"),
+                "summary": art.get("summary"),
+                "url": art.get("url"),
+                "source": art.get("source"),
+                "time": dt,
+                "raw_time": ts_str,
+                "sentiment_score": score,
+                "sentiment_label": art.get("overall_sentiment_label"),
             })
-            df.index = pd.to_datetime(df.index, errors="coerce")
-            df = df.sort_index().reset_index().rename(columns={"index": "Date"})
-            for c in ("Open", "High", "Low", "Close", "Adj Close", "Volume"):
-                if c in df.columns:
-                    df[c] = pd.to_numeric(df[c], errors="coerce")
-            df = df[df["Date"].between(start, end)]
-            if ("Close" in df and df["Close"].dropna().shape[0] >= 5) or \
-               ("Adj Close" in df and df["Adj Close"].dropna().shape[0] >= 5):
-                return df
-    except Exception:
-        pass
+        except Exception:
+            continue
 
-    # 3) Optional Stooq fallback (no key)
-    try:
-        if web is not None:
-            df = web.DataReader(ticker, "stooq", start, end)
-            df = df.sort_index().reset_index()
-            df.rename(columns={"Close": "Adj Close", "Date": "Date"}, inplace=True)
-            for c in ("Open", "High", "Low", "Close", "Adj Close", "Volume"):
-                if c in df.columns:
-                    df[c] = pd.to_numeric(df[c], errors="coerce")
-            return df
-    except Exception:
-        pass
-
-    st.warning(f"📊 Price history not available for this ticker via Yahoo/AlphaVantage/Stooq in this environment.")
-    return pd.DataFrame()
+    return items, None
 
 # -------------------------------
 # DATA & RATIOS
@@ -332,12 +390,18 @@ def collect_financial_data(ticker: str, prefer="auto") -> dict:
         "cash": _get_with_candidates(bs, ["Cash And Cash Equivalents", "CashAndCashEquivalents", "Cash"]),
         "accounts_receivable": _get_with_candidates(bs, ["Accounts Receivable", "AccountsReceivable", "Receivables"]),
         "inventory": _get_with_candidates(bs, ["Inventory"]),
-        "total_liabilities": _get_with_candidates(bs, ["Total Liabilities Net Minority Interest", "Total Liabilities", "TotalLiabilitiesNetMinorityInterest"]),
+        "total_liabilities": _get_with_candidates(
+            bs,
+            ["Total Liabilities Net Minority Interest", "Total Liabilities", "TotalLiabilitiesNetMinorityInterest"]
+        ),
         "current_liabilities": _get_with_candidates(bs, ["Current Liabilities", "CurrentLiabilities"]),
         "long_term_debt": _get_with_candidates(bs, ["Long Term Debt", "LongTermDebt"]),
         "total_debt": _get_with_candidates(bs, ["Total Debt", "TotalDebt"]),
         "retained_earnings": _get_with_candidates(bs, ["Retained Earnings", "RetainedEarnings"]),
-        "stockholders_equity": _get_with_candidates(bs, ["Stockholders Equity", "Total Equity Gross Minority Interest", "StockholdersEquity", "TotalEquityGrossMinorityInterest"]),
+        "stockholders_equity": _get_with_candidates(
+            bs,
+            ["Stockholders Equity", "Total Equity Gross Minority Interest", "StockholdersEquity", "TotalEquityGrossMinorityInterest"]
+        ),
 
         "total_revenue": _get_with_candidates(inc, ["Total Revenue", "TotalRevenue"]),
         "gross_profit": _get_with_candidates(inc, ["Gross Profit", "GrossProfit"]),
@@ -496,7 +560,7 @@ def build_models():
         }
     return {"scaler": scaler, "models": models, "metrics": metrics}
 
-def features_from_ratios(r): 
+def features_from_ratios(r):
     return np.array([r.get(k, 0.0) for k in FEATURES], dtype=float).reshape(1, -1)
 
 def predict_all(r):
@@ -505,7 +569,8 @@ def predict_all(r):
     Xs = scaler.transform(features_from_ratios(r))
     preds, votes, probs = {}, [], []
     for name, m in models.items():
-        p, pr = int(m.predict(Xs)[0]), float(m.predict_proba(Xs)[0, 1])
+        p = int(m.predict(Xs)[0])
+        pr = float(m.predict_proba(Xs)[0, 1])
         preds[name] = {
             "prediction": p,
             "probability_bankrupt": round(pr * 100, 2),
@@ -616,6 +681,7 @@ def _csv_from_history_last():
 def chart_price(df: pd.DataFrame, ticker: str, mode: str = "auto"):
     if df is None or df.empty or "Date" not in df.columns:
         return None
+
     df = df.copy().sort_values("Date").reset_index(drop=True)
 
     for c in ("Open", "High", "Low", "Close", "Adj Close", "Volume"):
@@ -625,56 +691,105 @@ def chart_price(df: pd.DataFrame, ticker: str, mode: str = "auto"):
     try:
         have_ohlc = all(c in df.columns for c in ("Open", "High", "Low", "Close")) and \
                     df[["Open", "High", "Low", "Close"]].dropna().shape[0] >= 5
+
         if mode == "line":
             have_ohlc = False
         if mode == "candle" and not have_ohlc:
             mode = "line"
 
-        fig = make_subplots(rows=2, cols=1, row_heights=[0.7, 0.3], vertical_spacing=0.05,
-                            subplot_titles=(f"{ticker} Stock Price", "Volume"))
+        fig = make_subplots(
+            rows=2, cols=1,
+            row_heights=[0.7, 0.3],
+            vertical_spacing=0.05,
+            subplot_titles=(f"{ticker} Stock Price", "Volume")
+        )
 
+        # Price trace
         if have_ohlc and mode in ("auto", "candle"):
             valid = df.dropna(subset=["Open", "High", "Low", "Close"])
-            fig.add_trace(go.Candlestick(
-                x=valid["Date"], open=valid["Open"], high=valid["High"],
-                low=valid["Low"], close=valid["Close"],
-                name="Price", increasing_line_color="#10b981", decreasing_line_color="#ef4444"
-            ), row=1, col=1)
+            fig.add_trace(
+                go.Candlestick(
+                    x=valid["Date"],
+                    open=valid["Open"],
+                    high=valid["High"],
+                    low=valid["Low"],
+                    close=valid["Close"],
+                    name="Price",
+                    increasing_line_color="#10b981",
+                    decreasing_line_color="#ef4444",
+                ),
+                row=1, col=1
+            )
         else:
-            price_col = "Close" if ("Close" in df.columns and df["Close"].notna().any()) \
-                       else "Adj Close" if ("Adj Close" in df.columns and df["Adj Close"].notna().any()) \
-                       else None
-            if not price_col:
+            price_col = None
+            if "Close" in df.columns and df["Close"].notna().any():
+                price_col = "Close"
+            elif "Adj Close" in df.columns and df["Adj Close"].notna().any():
+                price_col = "Adj Close"
+
+            if price_col is None:
                 return None
+
             valid = df.dropna(subset=[price_col])
             if valid.empty:
                 return None
-            fig.add_trace(go.Scatter(
-                x=valid["Date"], y=valid[price_col], mode="lines", name=price_col,
-                line=dict(width=2), fill="tozeroy", fillcolor="rgba(99,102,241,0.12)"
-            ), row=1, col=1)
 
+            fig.add_trace(
+                go.Scatter(
+                    x=valid["Date"],
+                    y=valid[price_col],
+                    mode="lines",
+                    name=price_col,
+                    line=dict(width=2),
+                    fill="tozeroy",
+                    fillcolor="rgba(99,102,241,0.12)",
+                ),
+                row=1, col=1
+            )
+
+        # Volume trace
         if "Volume" in df.columns and df["Volume"].notna().any():
-            fig.add_trace(go.Bar(x=df["Date"], y=df["Volume"], name="Volume", opacity=0.55),
-                          row=2, col=1)
+            fig.add_trace(
+                go.Bar(
+                    x=df["Date"],
+                    y=df["Volume"],
+                    name="Volume",
+                    opacity=0.55,
+                ),
+                row=2, col=1
+            )
 
-        fig.update_layout(template="plotly_dark", height=520, margin=dict(l=20, r=20, t=60, b=20),
-                          xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)",
-                          plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"),
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)",
-                         rangebreaks=[dict(bounds=["sat", "mon"])])
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
+        fig.update_layout(
+            template="plotly_dark",
+            height=520,
+            margin=dict(l=20, r=20, t=60, b=20),
+            xaxis_rangeslider_visible=False,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#cbd5e1"),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+            ),
+        )
+        fig.update_xaxes(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor="rgba(99,102,241,0.1)",
+            rangebreaks=[dict(bounds=["sat", "mon"])]
+        )
+        fig.update_yaxes(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor="rgba(99,102,241,0.1)"
+        )
         return fig
 
-    except KeyError:
-        price_col = "Adj Close" if "Adj Close" in df.columns else ("Close" if "Close" in df.columns else None)
-        if not price_col or df[price_col].dropna().empty:
-            return None
-        fig = go.Figure(go.Scatter(x=df["Date"], y=df[price_col], mode="lines", name=price_col))
-        fig.update_layout(template="plotly_dark", height=520, margin=dict(l=20, r=20, t=60, b=20),
-                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        return fig
+    except Exception:
+        return None
 
 def chart_z_components(components: dict):
     df = pd.DataFrame({"Component": list(components.keys()), "Value": list(components.values())})
@@ -723,7 +838,8 @@ def chart_ratio_radar(r: dict):
                       polar=dict(radialaxis=dict(visible=True, gridcolor="rgba(99,102,241,0.2)"),
                                  angularaxis=dict(gridcolor="rgba(99,102,241,0.2)"),
                                  bgcolor="rgba(0,0,0,0)"),
-                      margin=dict(l=80, r=80, t=60, b=20), paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
+                      margin=dict(l=80, r=80, t=60, b=20),
+                      paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
     return fig
 
 def chart_model_probs(ml: dict):
@@ -813,7 +929,7 @@ def chart_sector_risk(stats: dict):
     return fig
 
 # -------------------------------
-# INSIGHTS (compact bullets)
+# INSIGHTS
 # -------------------------------
 def make_insights(base, ratios, z, z_status, z_prob, ml, comb):
     bullets = []
@@ -841,7 +957,7 @@ def make_insights(base, ratios, z, z_status, z_prob, ml, comb):
 # ================== UI =======================
 # =============================================
 
-# Sidebar (models are ready here)
+# Sidebar config
 with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     prefer = st.selectbox("📊 Financials Preference", ["auto", "annual", "quarterly"], index=0,
@@ -868,7 +984,7 @@ with st.sidebar:
 st.markdown("""
 <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">
   <div style="font-size:20px;color:#f8fafc;font-weight:700">🏛️ Bankruptcy Prediction Dashboard</div>
-  <div style="color:#cbd5e1">Advanced Financial Analysis Using ML & Altman Z-Score</div>
+  <div style="color:#cbd5e1">Advanced Financial Analysis Using ML, Altman Z-Score & Global News Sentiment</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -954,12 +1070,30 @@ with tabs[0]:
                                                mime="text/csv", use_container_width=True)
                         m1, m2, m3 = st.columns(3)
                         with m1:
-                            st.markdown(f"""<div class="metric-card"><div class="metric-label">Market Cap</div><div class="metric-value">{fmt_curr(base.get('market_cap', 0))}</div></div>""", unsafe_allow_html=True)
+                            st.markdown(
+                                f"""<div class="metric-card">
+                                <div class="metric-label">Market Cap</div>
+                                <div class="metric-value">{fmt_curr(base.get('market_cap', 0))}</div>
+                                </div>""",
+                                unsafe_allow_html=True
+                            )
                         with m2:
-                            st.markdown(f"""<div class="metric-card"><div class="metric-label">Stock Price</div><div class="metric-value">{fmt_curr(base.get('stock_price', 0))}</div></div>""", unsafe_allow_html=True)
+                            st.markdown(
+                                f"""<div class="metric-card">
+                                <div class="metric-label">Stock Price</div>
+                                <div class="metric-value">{fmt_curr(base.get('stock_price', 0))}</div>
+                                </div>""",
+                                unsafe_allow_html=True
+                            )
                         with m3:
                             ind = base['industry'] if base['industry'] else "—"
-                            st.markdown(f"""<div class="metric-card"><div class="metric-label">Industry</div><div class="metric-value" style="font-size:1.0rem">{ind[:20]}</div></div>""", unsafe_allow_html=True)
+                            st.markdown(
+                                f"""<div class="metric-card">
+                                <div class="metric-label">Industry</div>
+                                <div class="metric-value" style="font-size:1.0rem">{ind[:20]}</div>
+                                </div>""",
+                                unsafe_allow_html=True
+                            )
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     with c2:
@@ -975,18 +1109,28 @@ with tabs[0]:
                             st.metric("Combined Risk", f"{comb['combined_probability']}%")
                             st.metric("Confidence", f"{ml['confidence']}%")
                         bar = "safe" if comb["combined_probability"] < 20 else ("warning" if comb["combined_probability"] < 50 else "danger")
-                        st.markdown(f"""<div class="progress-container" style="margin-top:12px;"><div class="progress-bar {bar}" style="width:{int(comb['combined_probability'])}%"></div></div>""", unsafe_allow_html=True)
+                        st.markdown(
+                            f"""<div class="progress-container" style="margin-top:12px;">
+                            <div class="progress-bar {bar}" style="width:{int(comb['combined_probability'])}%"></div>
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
                         st.markdown(f"<div class='small' style='margin-top:8px'>{comb['recommendation']}</div>", unsafe_allow_html=True)
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     st.markdown("---")
 
                     # Z + Price row
-                    m1, m2 = st.columns([1, 2], vertical_alignment="top")
+                    m1, m2 = st.columns([1, 2])
                     with m1:
                         st.markdown('<div class="card">', unsafe_allow_html=True)
                         st.plotly_chart(chart_z_gauge(z), use_container_width=True, config={"displayModeBar": False})
-                        st.markdown(f"<div class='small'><strong>Status:</strong> {z_status}<br><strong>Risk:</strong> {z_risk}<br><strong>Probability:</strong> {z_prob}%</div>", unsafe_allow_html=True)
+                        st.markdown(
+                            f"<div class='small'><strong>Status:</strong> {z_status}<br>"
+                            f"<strong>Risk:</strong> {z_risk}<br>"
+                            f"<strong>Probability:</strong> {z_prob}%</div>",
+                            unsafe_allow_html=True
+                        )
                         st.markdown("---")
                         st.markdown("#### ✨ Insights")
                         insights = make_insights(base, ratios, z, z_status, z_prob, ml, comb)
@@ -1010,6 +1154,73 @@ with tabs[0]:
 
                     st.markdown("---")
 
+                    # Global News & Sentiment
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    st.markdown("### 🌍 Global News & Sentiment")
+
+                    news_items, news_err = fetch_news_sentiment(ticker, limit=12)
+
+                    if news_err:
+                        st.info(f"News currently unavailable for {ticker}: {news_err}")
+                    elif not news_items:
+                        st.info(f"No recent news found for {ticker} from Alpha Vantage.")
+                    else:
+                        scores = [n["sentiment_score"] for n in news_items if n["sentiment_score"] is not None]
+                        avg_label_html = ""
+                        if scores:
+                            avg_score = sum(scores) / len(scores)
+                            if avg_score > 0.15:
+                                label = "Bullish"
+                                badge_class = "safe"
+                            elif avg_score < -0.15:
+                                label = "Bearish"
+                                badge_class = "distress"
+                            else:
+                                label = "Neutral"
+                                badge_class = "gray"
+                            avg_label_html = f"""
+                            <div class="metric-card" style="margin-bottom:10px;text-align:left">
+                              <div class="metric-label">Average News Sentiment</div>
+                              <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+                                <div class="badge {badge_class}">{label}</div>
+                                <div class="small">Score: {avg_score:.3f}</div>
+                              </div>
+                            </div>
+                            """
+                        if avg_label_html:
+                            st.markdown(avg_label_html, unsafe_allow_html=True)
+
+                        st.markdown("#### Latest Headlines")
+
+                        for i, n in enumerate(news_items[:5]):
+                            published = n["time"].strftime("%Y-%m-%d %H:%M UTC") if n["time"] else (n["raw_time"] or "Unknown time")
+                            sent = n["sentiment_label"] or "Unknown"
+                            src = n["source"] or "Unknown source"
+                            summary = (n["summary"] or "").strip()
+                            if len(summary) > 220:
+                                summary = summary[:217].rstrip() + "..."
+
+                            st.markdown(
+                                f"""
+                                <div class="card-tight" style="margin-bottom:8px">
+                                  <div class="small" style="opacity:.8">{src} • {published}</div>
+                                  <div style="font-weight:600;margin:4px 0 2px;">
+                                    <a href="{n['url']}" target="_blank" style="color:#e5e7eb;text-decoration:none;">
+                                      {n['title']}
+                                    </a>
+                                  </div>
+                                  <div class="small" style="margin-bottom:4px;">{summary}</div>
+                                  <div class="small" style="opacity:.9">Sentiment: <strong>{sent}</strong></div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                    st.markdown("---")
+
+                    # Z-components & Radar
                     ch1, ch2 = st.columns(2)
                     with ch1:
                         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -1048,7 +1259,7 @@ with tabs[0]:
 
                     st.markdown("---")
 
-                    # Ratios table stack
+                    # Ratios table
                     st.markdown('<div class="card">', unsafe_allow_html=True)
                     st.markdown("### 📊 Complete Financial Ratios")
                     ratio_categories = {
@@ -1081,7 +1292,8 @@ with tabs[0]:
 with tabs[1]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### ⚖️ Compare Multiple Companies")
-    line = st.text_input("Enter tickers (comma separated)", value="AAPL, MSFT, TSLA, GOOGL", help="Enter up to 12 tickers separated by commas")
+    line = st.text_input("Enter tickers (comma separated)", value="AAPL, MSFT, TSLA, GOOGL",
+                         help="Enter up to 12 tickers separated by commas")
     if st.button("🔍 Compare All", type="primary"):
         tks = normalize_tickers(line)[:12]
         if not tks:
@@ -1098,12 +1310,27 @@ with tabs[1]:
                         ml = predict_all(ratios)
                         comb = combined_assessment(z, ml)
                         record_industry(base["sector"], tk, z, ml["probability_bankrupt"])
-                        rows.append({"Ticker": tk, "Company": base["company_name"], "Sector": base["sector"],
-                                     "Z-Score": round(z, 2), "ML Risk %": ml["probability_bankrupt"],
-                                     "Combined %": comb["combined_probability"], "Status": comb["status"], "Risk Level": comb["risk_level"]})
+                        rows.append({
+                            "Ticker": tk,
+                            "Company": base["company_name"],
+                            "Sector": base["sector"],
+                            "Z-Score": round(z, 2),
+                            "ML Risk %": ml["probability_bankrupt"],
+                            "Combined %": comb["combined_probability"],
+                            "Status": comb["status"],
+                            "Risk Level": comb["risk_level"]
+                        })
                     except Exception as e:
-                        rows.append({"Ticker": tk, "Company": "Error", "Sector": "-", "Z-Score": None, "ML Risk %": None,
-                                     "Combined %": None, "Status": f"Failed: {str(e)[:30]}", "Risk Level": "-"})
+                        rows.append({
+                            "Ticker": tk,
+                            "Company": "Error",
+                            "Sector": "-",
+                            "Z-Score": None,
+                            "ML Risk %": None,
+                            "Combined %": None,
+                            "Status": f"Failed: {str(e)[:30]}",
+                            "Risk Level": "-"
+                        })
                     progress_bar.progress((i + 1) / max(len(tks), 1))
                 progress_bar.empty()
                 if rows:
@@ -1115,7 +1342,8 @@ with tabs[1]:
                         fig = go.Figure([go.Bar(x=valid["Ticker"], y=valid["Combined %"], marker_color=colors,
                                                 text=valid["Combined %"].round(1), texttemplate="%{text}%", textposition="outside")])
                         fig.update_layout(title="Combined Bankruptcy Risk Comparison", template="plotly_dark", height=450,
-                                          margin=dict(l=20, r=20, t=60, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                                          margin=dict(l=20, r=20, t=60, b=20),
+                                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                           font=dict(color="#cbd5e1"), yaxis_title="Bankruptcy Risk %")
                         fig.update_xaxes(showgrid=False)
                         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0, 100])
@@ -1139,7 +1367,13 @@ with tabs[2]:
                 vals = [stats['n'], stats['z_mean'], stats['z_med'], stats['z_min'], stats['z_max']]
                 for col, label, val in zip([m1, m2, m3, m4, m5], labels, vals):
                     with col:
-                        st.markdown(f"""<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{val}</div></div>""", unsafe_allow_html=True)
+                        st.markdown(
+                            f"""<div class="metric-card">
+                            <div class="metric-label">{label}</div>
+                            <div class="metric-value">{val}</div>
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
                 fig_sector = chart_sector_risk(stats)
                 if fig_sector:
                     st.plotly_chart(fig_sector, use_container_width=True, config={"displayModeBar": False})
@@ -1156,12 +1390,17 @@ with tabs[3]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### 🤖 Machine Learning Models Performance")
     m = build_models()["metrics"]
-    rows = [{"Model": name.replace("_", " ").title(),
-             "Accuracy": f"{met['accuracy']*100:.2f}%", "Precision": f"{met['precision']*100:.2f}%",
-             "Recall": f"{met['recall']*100:.2f}%", "F1-Score": f"{met['f1']*100:.2f}%", "ROC-AUC": f"{met['roc_auc']*100:.2f}%"}
-            for name, met in m.items()]
+    rows = [{
+        "Model": name.replace("_", " ").title(),
+        "Accuracy": f"{met['accuracy']*100:.2f}%",
+        "Precision": f"{met['precision']*100:.2f}%",
+        "Recall": f"{met['recall']*100:.2f}%",
+        "F1-Score": f"{met['f1']*100:.2f}%",
+        "ROC-AUC": f"{met['roc_auc']*100:.2f}%"
+    } for name, met in m.items()]
     df_rows = pd.DataFrame(rows)
     st.dataframe(df_rows, use_container_width=True, hide_index=True, height=250)
+
     fig = go.Figure()
     metrics_to_plot = ["Accuracy", "Precision", "Recall", "F1-Score", "ROC-AUC"]
     color_map = {"Accuracy": "#6366f1", "Precision": "#8b5cf6", "Recall": "#ec4899", "F1-Score": "#10b981", "ROC-AUC": "#f59e0b"}
@@ -1169,8 +1408,10 @@ with tabs[3]:
         vals = [float(v.strip("%")) for v in df_rows[metric]]
         fig.add_trace(go.Bar(name=metric, x=df_rows["Model"], y=vals, marker_color=color_map[metric]))
     fig.update_layout(title="Model Performance Comparison", template="plotly_dark", height=450, barmode="group",
-                      margin=dict(l=20, r=20, t=60, b=80), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color="#cbd5e1"), legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                      margin=dict(l=20, r=20, t=60, b=80),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color="#cbd5e1"),
+                      legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
                       yaxis_title="Score %")
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0, 100])
@@ -1186,24 +1427,35 @@ with tabs[4]:
     st.markdown("### 📜 Analysis History")
     hist = st.session_state.history[-50:]
     if hist:
-        tidy = [{"Timestamp": h["ts"], "Ticker": h["ticker"], "Company": h["company_name"], "Sector": h["sector"],
-                 "Z-Score": h["altman"]["score"], "Z-Status": h["altman"]["status"],
-                 "ML Risk %": h["ml"]["probability_bankrupt"], "Combined %": h["combined"]["combined_probability"],
-                 "Final Status": h["combined"]["status"]} for h in hist]
+        tidy = [{
+            "Timestamp": h["ts"],
+            "Ticker": h["ticker"],
+            "Company": h["company_name"],
+            "Sector": h["sector"],
+            "Z-Score": h["altman"]["score"],
+            "Z-Status": h["altman"]["status"],
+            "ML Risk %": h["ml"]["probability_bankrupt"],
+            "Combined %": h["combined"]["combined_probability"],
+            "Final Status": h["combined"]["status"]
+        } for h in hist]
         history_df = pd.DataFrame(tidy)
         st.dataframe(history_df, use_container_width=True, hide_index=True)
         if len(hist) > 1:
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=list(range(len(hist))),
-                                     y=[h["combined"]["combined_probability"] for h in hist],
-                                     mode="lines+markers", name="Combined Risk",
-                                     line=dict(color="#6366f1", width=3),
-                                     marker=dict(size=8, color="#6366f1"),
-                                     text=[h["ticker"] for h in hist],
-                                     hovertemplate="<b>%{text}</b><br>Risk: %{y:.2f}%<extra></extra>"))
+            fig.add_trace(go.Scatter(
+                x=list(range(len(hist))),
+                y=[h["combined"]["combined_probability"] for h in hist],
+                mode="lines+markers", name="Combined Risk",
+                line=dict(color="#6366f1", width=3),
+                marker=dict(size=8, color="#6366f1"),
+                text=[h["ticker"] for h in hist],
+                hovertemplate="<b>%{text}</b><br>Risk: %{y:.2f}%<extra></extra>"
+            ))
             fig.update_layout(title="Analysis Timeline - Risk Progression", template="plotly_dark", height=400,
-                              margin=dict(l=20, r=20, t=60, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                              font=dict(color="#cbd5e1"), xaxis_title="Analysis #", yaxis_title="Bankruptcy Risk %")
+                              margin=dict(l=20, r=20, t=60, b=20),
+                              paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                              font=dict(color="#cbd5e1"),
+                              xaxis_title="Analysis #", yaxis_title="Bankruptcy Risk %")
             fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)")
             fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="rgba(99,102,241,0.1)", range=[0, 100])
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -1219,7 +1471,14 @@ with tabs[5]:
     st.markdown("### 📥 Export Analysis Results")
     if st.session_state.history:
         last = st.session_state.history[-1]
-        st.markdown(f"<div class='small'><strong>Latest Analysis:</strong><br><strong>Company:</strong> {last['company_name']}<br><strong>Ticker:</strong> {last['ticker']}<br><strong>Status:</strong> {last['combined']['status']}<br><strong>Risk:</strong> {last['combined']['combined_probability']}%</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='small'><strong>Latest Analysis:</strong><br>"
+            f"<strong>Company:</strong> {last['company_name']}<br>"
+            f"<strong>Ticker:</strong> {last['ticker']}<br>"
+            f"<strong>Status:</strong> {last['combined']['status']}<br>"
+            f"<strong>Risk:</strong> {last['combined']['combined_probability']}%</div>",
+            unsafe_allow_html=True
+        )
         out = _csv_from_history_last()
         col1, col2 = st.columns(2)
         with col1:
@@ -1230,10 +1489,18 @@ with tabs[5]:
             )
         with col2:
             if len(st.session_state.history) > 1:
-                all_hist = [{"Timestamp": h["ts"], "Ticker": h["ticker"], "Company": h["company_name"], "Sector": h["sector"],
-                             "Z-Score": h["altman"]["score"], "Z-Status": h["altman"]["status"],
-                             "ML_Risk_%": h["ml"]["probability_bankrupt"], "Combined_%": h["combined"]["combined_probability"],
-                             "Status": h["combined"]["status"], "Risk_Level": h["combined"]["risk_level"]} for h in st.session_state.history]
+                all_hist = [{
+                    "Timestamp": h["ts"],
+                    "Ticker": h["ticker"],
+                    "Company": h["company_name"],
+                    "Sector": h["sector"],
+                    "Z-Score": h["altman"]["score"],
+                    "Z-Status": h["altman"]["status"],
+                    "ML_Risk_%": h["ml"]["probability_bankrupt"],
+                    "Combined_%": h["combined"]["combined_probability"],
+                    "Status": h["combined"]["status"],
+                    "Risk_Level": h["combined"]["risk_level"]
+                } for h in st.session_state.history]
                 csv_all = pd.DataFrame(all_hist).to_csv(index=False).encode("utf-8")
                 st.download_button(
                     "📥 Download Full History (CSV)", data=csv_all,
@@ -1249,8 +1516,8 @@ with tabs[5]:
 # -------------------------------
 st.markdown("""
 <div style="text-align:center;margin-top:24px;padding:16px;border-top:1px solid rgba(99,102,241,.2);color:#94a3b8">
-  <p><strong>Powered by:</strong> Altman Z-Score | ML (LR, RF, GB, XGBoost)</p>
-  <p><strong>Data Sources:</strong> Yahoo Finance (yfinance), Alpha Vantage (fallback), Stooq (optional)</p>
+  <p><strong>Powered by:</strong> Altman Z-Score | ML (LR, RF, GB, XGBoost) | Yahoo Finance | Alpha Vantage News</p>
+  <p><strong>Data Sources:</strong> Yahoo Finance (yfinance), Alpha Vantage (NEWS_SENTIMENT), Stooq (optional)</p>
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
