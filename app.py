@@ -76,7 +76,7 @@ html,body,[data-testid="stAppViewContainer"]{
   background:radial-gradient(1200px 800px at 15% 10%, #101744 0%, #0b0f2a 35%, #080b1e 100%) fixed;
 }
 
-.block-container { padding-top: 1.2rem; padding-bottom: 1.2rem; }
+.block-container { padding-top: 3.5rem; padding-bottom: 1.2rem; }
 [data-baseweb="tab-list"] { gap: 6px; }
 
 /* Cards */
@@ -1521,3 +1521,4 @@ st.markdown("""
   <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
+
